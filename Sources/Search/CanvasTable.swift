@@ -26,7 +26,7 @@ enum CanvasTable {
                   delimiter.allSatisfy({ $0.range(of: "^:?-{3,}:?$", options: .regularExpression) != nil }) else { index += 1; continue }
             let alignment: [NSTextAlignment] = delimiter.map { $0.hasPrefix(":") && $0.hasSuffix(":") ? .center : $0.hasSuffix(":") ? .right : .left }
             let table = NSTextTable(); table.numberOfColumns = header.count; table.layoutAlgorithm = .fixedLayoutAlgorithm
-            table.setValue(100, type: .percentage, for: .width)
+            table.setValue(100, type: .percentageValueType, for: .width)
             result.rows[index] = Row(table: table, index: 0, cells: header, alignment: alignment); result.separators.insert(index + 1)
             index += 2; var row = 1
             while index < lines.count, row <= 100, let values = cells(lines[index]), !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
@@ -46,8 +46,8 @@ enum CanvasTable {
             value.enumerateAttribute(.link, in: NSRange(location: 0, length: value.length)) { url, range, _ in if (url as? URL)?.scheme == "locus-task" { tasks.append(range) } }
             for range in tasks { value.removeAttribute(.link, range: range) }
             let block = NSTextTableBlock(table: row.table, startingRow: row.index, rowSpan: 1, startingColumn: column, columnSpan: 1)
-            block.setValue(CGFloat(100) / CGFloat(row.cells.count), type: .percentage, for: .width)
-            block.setWidth(6, type: .absolute, for: .padding); block.setWidth(0.5, type: .absolute, for: .border)
+            block.setValue(CGFloat(100) / CGFloat(row.cells.count), type: .percentageValueType, for: .width)
+            block.setWidth(6, type: .absoluteValueType, for: .padding); block.setWidth(0.5, type: .absoluteValueType, for: .border)
             block.setBorderColor(Palette.NS.faint); block.backgroundColor = row.index == 0 ? Palette.NS.wash : Palette.NS.ground
             let paragraph = NSMutableParagraphStyle(); paragraph.textBlocks = [block]; paragraph.alignment = row.alignment[column]; paragraph.paragraphSpacing = 3
             value.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: value.length))

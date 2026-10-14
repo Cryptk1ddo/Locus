@@ -1,4 +1,4 @@
-Locus 0.1.0 is the first packaged development snapshot of the current browser.
+Locus 0.1.1 is the first packaged development snapshot of the current browser.
 
 - Contextual Spaces, visual Wall and structured workspace objects.
 - Native Canvas notes, file previews, imports/exports and vault integration.
