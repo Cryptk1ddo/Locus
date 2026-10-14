@@ -16,6 +16,8 @@ final class LocalDownloadServer {
     private var requests: [Request] = []
     private var completedPaths: [String] = []
     private var stopped = false
+    private let failureGate = NSCondition()
+    private var failureReleased = false
     private let payload: Data
     let port: UInt16
 
@@ -103,12 +105,22 @@ final class LocalDownloadServer {
 
     func expectedBytes() -> Data { payload }
 
+    /// Close only after WebKit has adopted the download and chosen its destination.
+    /// Closing on a short timer races older WebKit on a busy CI runner.
+    func releaseFailure() {
+        failureGate.lock()
+        failureReleased = true
+        failureGate.broadcast()
+        failureGate.unlock()
+    }
+
     func stop() {
         requestsLock.lock()
         let shouldStop = !stopped
         stopped = true
         requestsLock.unlock()
         guard shouldStop else { return }
+        releaseFailure()
         source.cancel()
         shutdown(socket, SHUT_RDWR)
         Darwin.close(socket)
@@ -183,6 +195,14 @@ final class LocalDownloadServer {
             offset = next
             // Leave enough time for the test to pause after real bytes arrive.
             Thread.sleep(forTimeInterval: 0.008)
+        }
+        if shouldTruncate && request.path == "/failure.bin" {
+            failureGate.lock()
+            let deadline = Date().addingTimeInterval(20)
+            while !failureReleased {
+                if !failureGate.wait(until: deadline) { break }
+            }
+            failureGate.unlock()
         }
         if !shouldTruncate {
             requestsLock.lock()

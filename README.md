@@ -15,7 +15,7 @@ builds; Apple Developer ID signing and notarization are planned. Review
 
 ## Build and run
 
-Requires macOS 14+ and Xcode 26 or newer (Swift 6). Extensions need macOS 15.4+.
+Requires macOS 14+, Xcode 26 or newer (Swift 6), and Python 3.11+. Extensions need macOS 15.4+.
 
 ```sh
 swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize

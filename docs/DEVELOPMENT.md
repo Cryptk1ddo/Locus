@@ -35,8 +35,9 @@ Update `VERSION` and `docs/RELEASE_NOTES.md` in a tested PR. Once merged:
 ```sh
 git checkout main
 git pull --ff-only
-git tag -a v0.1.1 -m 'Locus 0.1.1'
-git push origin v0.1.1
+release_tag="v$(tr -d '[:space:]' < VERSION)"
+git tag -a "$release_tag" -m "Locus $release_tag"
+git push origin "$release_tag"
 ```
 
 The release workflow verifies tag/version agreement, runs tests, builds each

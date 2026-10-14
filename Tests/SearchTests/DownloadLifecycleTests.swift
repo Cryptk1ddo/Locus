@@ -81,6 +81,8 @@ final class DownloadLifecycleTests: XCTestCase {
     func testWebKitFailureWithResumeDataResumesSameEntryAndDestination() async throws {
         let tab = try await openFixturePage()
         let entry = try await startDownload("/failure.bin", in: tab)
+        try await waitUntil { entry.destination != nil && entry.completedBytes >= 64 * 1024 }
+        fixture.releaseFailure()
         try await waitUntil { entry.state == .failed }
 
         let originalID = entry.id

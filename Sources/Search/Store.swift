@@ -10,7 +10,8 @@ import WebKit
 
 enum Store {
     static var locus: Bool { Bundle.main.bundleIdentifier?.hasPrefix("com.cryptk1ddo.locus") == true }
-    static var product: String { locus ? "Locus" : "Search" }
+    // Existing native probes share the Search test-world contract across bundle IDs.
+    static var product: String { locus && !testing ? "Locus" : "Search" }
     /// A run is a test run if it says so, or if it is being run straight out
     /// of the build folder rather than from an installed app. The second half
     /// is not belt and braces: a development build launched from a terminal

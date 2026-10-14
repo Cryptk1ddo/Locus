@@ -2,8 +2,9 @@
 
 Locus is a development browser. Use the newest release; older releases do not
 receive separate fixes. Report vulnerabilities through this repository's GitHub
-Security → Report a vulnerability flow. Avoid posting credentials, private profile
-data or exploit details in public issues.
+Security → Report a vulnerability flow when it is enabled. Otherwise, open a
+minimal issue requesting a private disclosure channel without exploit details.
+Avoid posting credentials or private profile data in public issues.
 
 Development update manifests are informational: they can announce a release and
 open GitHub, but cannot authorize executable installation. Signed installations
