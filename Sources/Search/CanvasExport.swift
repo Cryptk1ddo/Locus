@@ -7,8 +7,8 @@ import ImageIO
         var title: String { switch self { case .json: return "JSON Canvas…"; case .portable: return "Portable folder…"; case .png: return "PNG overview…"; case .pdf: return "PDF overview…" } }
     }
     enum Failure: LocalizedError {
-        case empty, destinationExists, tooLarge
-        var errorDescription: String? { switch self { case .empty: return "Add or select cards before exporting."; case .destinationExists: return "Choose a new folder name; an existing export will not be replaced."; case .tooLarge: return "This export exceeds the asset or image size limit. Export a smaller selection." } }
+        case empty, destinationExists, tooLarge, writeFailed
+        var errorDescription: String? { switch self { case .empty: return "Add or select cards before exporting."; case .destinationExists: return "Choose a new folder name; an existing export will not be replaced."; case .tooLarge: return "This export exceeds the asset or image size limit. Export a smaller selection."; case .writeFailed: return "The portable folder could not be written. Choose another destination." } }
     }
     static let assetLimit = 20_000_000, totalLimit = 100_000_000, countLimit = 200
     static func cards(_ snapshot: WorkspaceSnapshot, selection: Set<UUID>?) throws -> [WallPlacement] {
@@ -23,20 +23,21 @@ import ImageIO
         return data
     }
     @discardableResult static func portable(_ snapshot: WorkspaceSnapshot, store: WorkspaceStore, selection: Set<UUID>? = nil, to destination: URL) throws -> Int {
+        let vault = CanvasVault.shared(workspace: store.file)
+        if let result = try vault.withRoot({ root in
+            try writePortable(snapshot, store: store, selection: selection, to: destination, vault: vault, root: root)
+        }) { return result }
+        return try writePortable(snapshot, store: store, selection: selection, to: destination, vault: vault, root: nil)
+    }
+    private static func writePortable(_ snapshot: WorkspaceSnapshot, store: WorkspaceStore, selection: Set<UUID>?, to destination: URL, vault: CanvasVault, root: URL?) throws -> Int {
         let cards = try cards(snapshot, selection: selection), objects = Dictionary(uniqueKeysWithValues: snapshot.objects.map { ($0.id, $0) })
         try WorkspaceFiles.checkPath(destination); guard !WorkspaceFiles.exists(destination) else { throw Failure.destinationExists }
         let fm = FileManager.default, staging = destination.deletingLastPathComponent().appendingPathComponent(".locus-export-\(UUID())", isDirectory: true)
         try fm.createDirectory(at: staging.appendingPathComponent("assets"), withIntermediateDirectories: true); defer { try? fm.removeItem(at: staging) }
         var document = try JSONDecoder().decode([String: ObjectValue].self, from: CanvasJSON.export(snapshot, selection: selection))
         guard case .array(var nodes) = document["nodes"], nodes.count == cards.count else { throw WorkspaceError.invalid }
-        var unresolved: [ObjectValue] = [], previews: [ObjectValue] = [], copied: [UUID: String] = [:], total = 0
-        func save(_ data: Data, object: LocusObject, ext: String) throws -> String {
-            if let path = copied[object.id] { return path }
-            guard copied.count < countLimit, data.count <= assetLimit, data.count <= totalLimit - total else { throw Failure.tooLarge }
-            let suffix = ext.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
-            let path = "assets/\(copied.count + 1)." + (suffix.isEmpty ? "bin" : String(suffix.prefix(12)))
-            try data.write(to: staging.appendingPathComponent(path), options: .atomic); copied[object.id] = path; total += data.count; return path
-        }
+        var unresolved: [ObjectValue] = [], previews: [ObjectValue] = [], directFiles: Set<String> = []
+        let files = CanvasPortableFiles(staging: staging, snapshot: snapshot, vault: vault, root: root)
         for (index, card) in cards.enumerated() {
             guard let object = objects[card.objectID], case .dictionary(var node) = nodes[index] else { throw WorkspaceError.invalid }
             let nodeID = node["id"] ?? .string(card.id.uuidString)
@@ -44,34 +45,35 @@ import ImageIO
                 let key = object.type == "file" ? "file" : "background"
                 if node[key]?.text != nil {
                     do {
-                        let path = try CanvasFiles.withURL(object) { url -> String? in
-                            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]); guard values.isRegularFile == true, values.isSymbolicLink != true else { throw WorkspaceError.unsafePath }
-                            return try save(CanvasFileDraft.read(url, limit: assetLimit), object: object, ext: url.pathExtension)
-                        }
-                        if let path { node[key] = .string(path) }
+                        let path = try files.file(object)
+                        if let path { node[key] = .string(path); directFiles.insert(path) }
                         else { unresolved.append(.dictionary(["node": nodeID, "reference": node[key]!, "reason": .string("No file access grant")])) }
-                    } catch Failure.tooLarge { throw Failure.tooLarge }
+                    } catch let error as Failure { throw error }
                     catch CanvasFileEditError.tooLarge { throw Failure.tooLarge }
                     catch { unresolved.append(.dictionary(["node": nodeID, "reference": node[key]!, "reason": .string("File unavailable")])) }
                 }
+            } else if ["note", "aiOutput"].contains(object.type) {
+                node["text"] = .string(try files.note(object.text, object: object, node: nodeID))
             } else if object.snapshotID != nil {
                 do {
                     if let data = try owned(object, store: store) {
-                        let path = try save(data, object: object, ext: "png")
+                        let path = try files.saved(data, object: object)
                         previews.append(.dictionary(["node": nodeID, "file": .string(path), "title": .string(object.title)]))
                         if object.type == "uiCapture" { node["type"] = .string("file"); node["file"] = .string(path); node.removeValue(forKey: "text") }
                     }
-                } catch Failure.tooLarge { throw Failure.tooLarge }
+                } catch let error as Failure { throw error }
                 catch { unresolved.append(.dictionary(["node": nodeID, "reason": .string("Saved preview unavailable")])) }
             }
             nodes[index] = .dictionary(node)
         }
+        unresolved += files.unresolved
         document["nodes"] = .array(nodes)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         let data = try encoder.encode(document); guard data.count <= CanvasJSON.limit else { throw Failure.tooLarge }
         try data.write(to: staging.appendingPathComponent("Wall.canvas"))
-        let manifest: [String: ObjectValue] = ["version": .number(1), "assets": .number(Double(copied.count)), "bytes": .number(Double(total)), "unresolved": .array(unresolved), "previews": .array(previews)]
-        try encoder.encode(manifest).write(to: staging.appendingPathComponent("manifest.json"))
+        let manifest: [String: ObjectValue] = ["version": .number(1), "assets": .number(Double(files.count)), "bytes": .number(Double(files.total)), "unresolved": .array(unresolved), "previews": .array(previews), "dependencies": .array(files.filePaths.subtracting(directFiles).sorted().map(ObjectValue.string))]
+        let manifestData = try encoder.encode(manifest); guard manifestData.count <= 256_000 else { throw Failure.tooLarge }
+        try manifestData.write(to: staging.appendingPathComponent("manifest.json"))
         // Rename publishes the complete folder; a concurrent existing destination fails.
         try fm.moveItem(at: staging, to: destination); return unresolved.count
     }

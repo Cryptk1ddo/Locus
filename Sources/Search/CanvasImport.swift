@@ -22,6 +22,8 @@ import AppKit
             let key = fields["type"] == .string("file") ? "file" : fields["type"] == .string("group") ? "background" : ""
             if let path = fields[key]?.text { references.insert(path) }
         }
+        let portableContext = UUID().uuidString
+        var dependencies: [LocusObject] = []
         var grants: [String: Data] = [:], unresolved = 0, total = 0
         var counted: Set<String> = []
         for reference in references.sorted() {
@@ -39,6 +41,26 @@ import AppKit
             let payload: [String: ObjectValue]? = (try? WorkspaceFiles.checkPath(manifest)) != nil ?
                 (try? JSONDecoder().decode([String: ObjectValue].self, from: CanvasFileDraft.read(manifest, limit: 256_000))) : nil
             if let payload, payload["version"] == .number(1), case .array(let entries) = payload["previews"] {
+                if case .array(let paths) = payload["dependencies"] {
+                    guard paths.count <= CanvasExport.countLimit else { throw Failure.tooLarge }
+                    var seen: Set<String> = []
+                    for value in paths {
+                        guard let reference = value.text, seen.insert(reference).inserted else { unresolved += 1; continue }
+                        if references.contains(reference) { continue }
+                        guard let url = CanvasVault.safeURL(reference, root: folder),
+                              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+                              let size = values.fileSize else { unresolved += 1; continue }
+                        if !counted.contains(url.path) {
+                            guard size <= CanvasExport.assetLimit, size <= CanvasExport.totalLimit - total,
+                                  counted.count < CanvasExport.countLimit else { throw Failure.tooLarge }
+                            total += size; counted.insert(url.path)
+                        }
+                        let bookmark = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+                        dependencies.append(LocusObject(type: "file", title: url.lastPathComponent, content: [
+                            "file": .string(reference), "bookmark": .string(bookmark.base64EncodedString()),
+                            "portableContext": .string(portableContext)]))
+                    }
+                } else if payload["dependencies"] != nil { throw WorkspaceError.invalid }
                 guard entries.count <= CanvasExport.countLimit else { throw Failure.tooLarge }
                 let linkIDs = Set(nodes.compactMap { node -> String? in
                     guard case .dictionary(let value) = node, value["type"] == .string("link") else { return nil }; return value["id"]?.text
@@ -72,8 +94,8 @@ import AppKit
                 }
             } else { unresolved += 1 }
         }
-        let selected = try CanvasJSON.importData(data, into: store, at: point, grants: grants, previews: previews)
+        let selected = try CanvasJSON.importData(data, into: store, at: point, grants: grants, previews: previews, dependencies: dependencies, portableContext: portableContext)
         committed = true
-        return Result(selected: selected, unresolved: unresolved, granted: grants.count, previews: previews.count)
+        return Result(selected: selected, unresolved: unresolved, granted: grants.count + dependencies.count, previews: previews.count)
     }
 }
