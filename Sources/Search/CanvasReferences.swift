@@ -25,6 +25,28 @@ struct CanvasReference: Equatable {
             let value = ["md", "markdown", "txt", "pdf", "canvas"].contains(path.pathExtension.lowercased()) ? path.deletingPathExtension : text
             return value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
         }
+        if let context = source?.content["portableContext"]?.text {
+            let scoped = documents.filter { $0.content["portableContext"]?.text == context }
+            let parent = (source?.content["file"]?.text ?? "") as NSString
+            let directory = parent.deletingLastPathComponent
+            var paths: [String] = []
+            for base in [directory, ""] {
+                if let path = CanvasPortableReferences.relative(target, parent: base) {
+                    paths.append(path)
+                    if (path as NSString).pathExtension.isEmpty { paths += [path + ".md", path + ".markdown"] }
+                }
+            }
+            guard !paths.isEmpty else { return nil }
+            for path in paths {
+                let matches = scoped.filter { $0.content["file"]?.text == path }
+                // Multiple Canvas cards may bookmark the same file in this import.
+                if let match = matches.first { return match }
+            }
+            let matches = scoped.filter { name($0.title) == name((target as NSString).lastPathComponent) }
+            if matches.count == 1 { return matches[0] }
+            if matches.count > 1 { return nil }
+            return nil
+        }
         let exact = documents.filter { name($0.title) == name(target) }
         if exact.count == 1 { return exact[0] }
         if exact.count > 1 { return nil }

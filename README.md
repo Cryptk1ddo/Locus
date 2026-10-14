@@ -57,7 +57,7 @@ Canvas caches, shared native vault watchers and hidden-page motion polling are c
 
 Granted Markdown/text file cards edit in place with restart-recoverable drafts and external-change protection. Files outside the connected vault use explicit Save. See the [file editor contract](docs/CANVAS_FILE_EDITING.md).
 
-Whole-Wall and selected-card exports now include portable folders with granted files/saved previews and native PNG/PDF overviews. See [Canvas exports and sample output](docs/CANVAS_EXPORTS.md).
+Whole-Wall and selected-card exports now include portable folders with recursively referenced granted Markdown/media files and saved previews and native PNG/PDF overviews. See [Canvas exports and sample output](docs/CANVAS_EXPORTS.md).
 
 Connect a folder through Wall settings to enable vault-note autosave. Local images, Markdown tables and note/heading/block embeds now render natively. External file changes pause saving and keep recovery drafts. See [vault workflows](docs/CANVAS_VAULT_AND_EMBEDS.md).
 

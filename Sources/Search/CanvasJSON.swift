@@ -54,7 +54,7 @@ enum CanvasJSON {
         var document = snapshot.wall.canvasExtras ?? [:]; document["nodes"] = .array(nodes); document["edges"] = .array(edges)
         let data = try encoder.encode(document); guard data.count <= limit else { throw WorkspaceError.tooLarge }; return data
     }
-    @MainActor @discardableResult static func importData(_ data: Data, into store: WorkspaceStore, at point: CGPoint? = nil, grants: [String: Data] = [:], previews: [String: SavedPreview] = [:]) throws -> Set<UUID> {
+    @MainActor @discardableResult static func importData(_ data: Data, into store: WorkspaceStore, at point: CGPoint? = nil, grants: [String: Data] = [:], previews: [String: SavedPreview] = [:], dependencies: [LocusObject] = [], portableContext: String? = nil) throws -> Set<UUID> {
         guard data.count <= limit else { throw WorkspaceError.tooLarge }
         let fields = try JSONDecoder().decode([String: ObjectValue].self, from: data)
         let nodes: [ObjectValue], edges: [ObjectValue]
@@ -69,6 +69,7 @@ enum CanvasJSON {
                   let x = number(node["x"]), let y = number(node["y"]), let w = number(node["width"]), let h = number(node["height"]),
                   w >= 1, h >= 1, node["color"] == nil || node["color"]?.text.map(CanvasColor.valid) == true else { throw WorkspaceError.invalid }
             var content: [String: ObjectValue] = ["canvasID": .string(id), "canvasNode": .dictionary(node)]
+            if let portableContext { content["portableContext"] = .string(portableContext) }
             let title: String, native: String
             switch type {
             case "text": guard let text = node["text"]?.text else { throw WorkspaceError.invalid }; content["text"] = .string(text); title = String(text.prefix(80)); native = "note"
@@ -103,7 +104,7 @@ enum CanvasJSON {
         if let point, let minX = cards.map(\.x).min(), let minY = cards.map(\.y).min() {
             for i in cards.indices { cards[i].x += point.x - minX; cards[i].y += point.y - minY }
         }
-        guard store.mutate({ next in next.objects += objects; next.placements += cards; next.wall.edges += visual; next.wall.canvasExtras = (next.wall.canvasExtras ?? [:]).merging(fields.filter { !["nodes", "edges"].contains($0.key) }) { _, new in new } }) else { throw WorkspaceError.unavailable }
+        guard store.mutate({ next in next.objects += objects + dependencies; next.placements += cards; next.wall.edges += visual; next.wall.canvasExtras = (next.wall.canvasExtras ?? [:]).merging(fields.filter { !["nodes", "edges"].contains($0.key) }) { _, new in new } }) else { throw WorkspaceError.unavailable }
         return Set(cards.map(\.id))
     }
 }
