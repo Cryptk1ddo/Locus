@@ -24,7 +24,7 @@ try:
         (vault / "B.md").write_text("# Detail\nNested portable content\n![[A]]\n![[image.png]]\n")
         # Use a known-valid generated bitmap rather than a remote image.
         import subprocess
-        subprocess.run(["swift", "-e", 'import AppKit; let b = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:2,pixelsHigh:2,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!; for x in 0..<2 { for y in 0..<2 { b.setColor(.systemBlue,atX:x,y:y) } }; try b.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:CommandLine.arguments[1]))', str(vault / "image.png")], check=True)
+        subprocess.run(["swift", "-e", 'import AppKit; let b = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:2,pixelsHigh:2,bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,bytesPerRow:0,bitsPerPixel:0)!; for x in 0..<2 { for y in 0..<2 { b.setColor(NSColor(deviceRed:0.1,green:0.4,blue:0.9,alpha:1),atX:x,y:y) } }; try b.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:CommandLine.arguments[1]))', str(vault / "image.png")], check=True)
         (vault / "Unused.md").write_text("Do not copy unrelated notes")
         original = a.read_bytes()
         sv.setup(sidebar=False)
@@ -49,7 +49,9 @@ try:
         sv.cmd({"do": "press", "code": 53, "chars": ""})
         time.sleep(.4)
         previews = wall("canvasContentInfo")["previews"]
-        text = next(p["text"] for p in previews if p["object"] == obj)
+        preview = next(p for p in previews if p["object"] == obj)
+        text = preview["text"]
+        t.ok("nested image renders from its restored bookmark", preview["images"] >= 1, preview)
         t.ok("imported dependency renders through explicit file grant", "Nested portable content" in text, text)
         t.ok("cycle is rendered as bounded native message", "Cyclic embed" in text, text)
         wall("canvasUndo")
