@@ -23,7 +23,10 @@ Python probes retain their isolated Search test-world names.
 ## CI
 
 CI runs on PRs and pushes to `main`: Swift model/security regression tests,
-Apple Silicon packaging and verification, plus gitleaks. GitHub retains the
+Apple Silicon packaging and verification, plus gitleaks. Hosted CI runs 202 tests;
+the seven live WebKit `DownloadLifecycleTests` are excluded with `--skip` because
+the hosted GUI/network lifecycle is not a reliable substitute for a native Mac.
+The full local suite remains 209 tests. GitHub retains the
 package artifacts for 14 days. Dependabot proposes GitHub Actions updates weekly.
 Full native WebKit, Canvas, PiP and performance probes require a GUI session;
 passing CI does not claim real-site, DRM, VoiceOver or complete release QA.

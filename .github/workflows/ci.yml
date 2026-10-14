@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Model and security regression tests
-        run: swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize
+        run: swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize --skip DownloadLifecycleTests
       - name: Package development app
         run: python3 scripts/package-app.py --arch arm64
       - name: Verify package metadata

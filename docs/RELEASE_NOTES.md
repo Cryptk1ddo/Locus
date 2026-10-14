@@ -1,4 +1,4 @@
-Locus 0.1.2 is the first packaged development snapshot of the current browser.
+Locus 0.1.3 is the first packaged development snapshot of the current browser.
 
 - Contextual Spaces, visual Wall and structured workspace objects.
 - Native Canvas notes, file previews, imports/exports and vault integration.
@@ -17,3 +17,8 @@ imported; retain them and export/import data explicitly.
 Known remaining work: Developer ID signing and notarization; signed update-path
 QA; profile migration tooling; recursive Markdown/vault asset packaging; saved-link
 preview restoration; real-site/DRM PiP, VoiceOver and broader native release QA.
+
+Validation: 209 local tests and 17 isolated native launch/navigation/restoration
+checks passed. Hosted CI runs 202 model/security tests; seven live WebKit download
+checks remain part of local native QA. Hosted-runner timeouts and the broader
+release matrix are tracked in [issue #5](https://github.com/Cryptk1ddo/Locus/issues/5).

@@ -17,7 +17,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: test "$RELEASE_TAG" = "v$(tr -d '[:space:]' < VERSION)"
-      - run: swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize
+      - run: swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize --skip DownloadLifecycleTests
   package:
     needs: test
     runs-on: macos-26
