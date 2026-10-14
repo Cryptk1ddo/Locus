@@ -315,6 +315,7 @@ extension Browser {
         spaces.remove(at: at)
         Spaces.write(spaces)
         Session.erase(space: id)
+        WorkspaceStore.erase(id)
         // Gone from the other windows too: their rows there, and the space
         // itself if one was showing it (the list's change moves it).
         for other in Browsers.all where other !== self { other.forget(space: id) }
@@ -457,6 +458,7 @@ enum SpaceMenu {
             menu.addItem(entry)
         }
         menu.addItem(.separator())
+        menu.addItem(item("Open Wall") { browser.openWall() })
         menu.addItem(item("New Space…") { browser.askForSpace() })
         menu.addItem(.separator())
         let here = browser.space

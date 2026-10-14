@@ -7,11 +7,12 @@ struct ExtensionsPage: View {
     @ObservedObject var browser: Browser
 
     var body: some View {
-        if #available(macOS 15.4, *) {
-            Installer(browser: browser, extensions: .shared)
-        } else {
-            Card {
-                Line("Chrome extensions", "Need macOS 15.4 or later — the version whose WebKit can run them.") { EmptyView() }
+        VStack(alignment: .leading, spacing: 18) {
+            NightColorsSettings(browser: browser)
+            if #available(macOS 15.4, *) {
+                Installer(browser: browser, extensions: .shared)
+            } else {
+                Card { Line("Chrome extensions", "Need macOS 15.4 or later — the version whose WebKit can run them.") { EmptyView() } }
             }
         }
     }
@@ -265,5 +266,58 @@ struct StoreOffer: View {
         let host = url.host()?.lowercased() ?? ""
         return host == "chromewebstore.google.com"
             || (host == "chrome.google.com" && url.path.hasPrefix("/webstore"))
+    }
+}
+
+/// Built-in controls share Extensions settings without another toolbar button.
+private struct NightColorsSettings: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject private var night = NightColors.shared
+    private var tab: Tab? { browser.active }
+    @State private var summary = ""
+    private var summaryKey: String { "\(night.enabled):\(tab?.id.uuidString ?? ""):\(night.mode(for: tab?.pageAddress, shy: tab?.shy ?? false).rawValue):\(browser.prefs.look.rawValue)" }
+    var body: some View {
+        Card {
+            VStack(spacing: 0) {
+                Line("Night Colors · Built in", "Adapt page colors for the browser’s dark canvas. Automatic follows dark browser appearance and retains native dark sites. Photos and video keep their colors.") {
+                    Switch(on: Binding(get: { night.enabled }, set: { night.setEnabled($0) }))
+                }
+                if night.enabled {
+                    Rule()
+                    if let tab, let host = NightColors.host(tab.pageAddress) {
+                        Line(host, (summary.isEmpty ? "" : summary + " · ") + (tab.shy ? "This private site's choice lasts for this app session" : "This site's choice is remembered on this Mac")) {
+                            Picker("Site mode", selection: Binding(get: { night.mode(for: tab.pageAddress, shy: tab.shy) }, set: { night.setMode($0, for: tab.pageAddress, shy: tab.shy) })) {
+                                ForEach(NightColors.Mode.allCases) { mode in Text(mode.title).tag(mode) }
+                            }.labelsHidden().frame(width: 140)
+                        }
+                    } else {
+                        Line("Site controls", "Open a web page to choose Automatic, Always adapt or Off for its site") { EmptyView() }
+                    }
+                    Rule()
+                    Line("Browser appearance", "Dark gives the page and browser the same canvas") {
+                        Pill("Use Dark") { browser.prefs.look = .dark }
+                    }
+                    if !night.sites.isEmpty {
+                        Rule()
+                        Line("Site choices", "\(night.sites.count) remembered sites") { Pill("Reset") { night.resetSites() } }
+                    }
+                }
+            }
+        }.task(id: summaryKey) {
+            guard night.enabled, let tab, let web = tab.built else { summary = ""; return }
+            do { try await Task.sleep(nanoseconds: 400_000_000) } catch { return }
+            web.evaluateJavaScript("globalThis.__locusNight?.status()", in: nil, in: Web.world) { result in
+                guard browser.active?.id == tab.id else { return }
+                guard case .success(let value) = result, let status = value as? [String: Any] else { summary = "Loading page colors"; return }
+                switch status["state"] as? String {
+                case "native-dark": summary = "Native dark theme retained"
+                case "waiting-dark": summary = "Waiting for dark appearance"
+                case "adapted": summary = status["truncated"] as? Bool == true ? "Some page colors retain their original appearance" : "Night colors applied"
+                case "error": summary = "Original page colors retained"
+                case "disabled": summary = "Original page colors"
+                default: summary = "Loading page colors"
+                }
+            }
+        }
     }
 }

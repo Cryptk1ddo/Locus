@@ -25,6 +25,10 @@ struct SearchApp: App {
             Session.startFresh(spaces: Spaces.read().map(\.id))
             Browsers.startFresh()
         }
+        // Creating the primary browser registers it with Front (@Published).
+        // Do that before SwiftUI evaluates the scene and its menu bindings,
+        // rather than from the lazy SceneSlot access inside body.
+        _ = SceneSlot.shared
     }
 
     var body: some Scene {
@@ -37,7 +41,7 @@ struct SearchApp: App {
         // shares, and a probe resized for a test once changed the size the
         // real window came back at. The other windows' frames are in
         // windows.json (see Windows.swift).
-        Window("Search", id: Browsers.sceneID) {
+        Window("Locus", id: Browsers.sceneID) {
             SceneRoot(slot: SceneSlot.shared)
                 .frame(minWidth: 640, minHeight: 420)
         }
@@ -108,6 +112,11 @@ struct SearchApp: App {
                         Text(glyph.title).tag(glyph)
                     }
                 }
+                Divider()
+                Button("Capture UI…") { browser.startUICapture() }
+                    .disabled(!browser.canCaptureUI)
+                Button("Open Wall") { browser.openWall() }
+                    .disabled(!browser.canOpenWall)
                 Divider()
                 Button("Reload Page") { browser.reload() }
                     .shortcut("view.reload")
@@ -419,7 +428,10 @@ struct ContentView: View {
     // Page that is never rebuilt from one tab to the next (see Stage.swift).
     @ViewBuilder
     private var stage: some View {
-        if browser.prefs.splitView {
+        if let tab = browser.active, tab.wallSpaceID == browser.spaceID {
+            WallView(browser: browser, store: WorkspaceStore.shared(for: browser.spaceID))
+                .id(tab.id)
+        } else if browser.prefs.splitView {
             SplitStage(browser: browser)
         } else if let tab = browser.active {
             Page(tab: tab)
@@ -510,6 +522,9 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             StoreOffer(browser: browser)
+            if browser.capturingUI {
+                hint("Click an element to capture   esc cancel")
+            }
             if browser.veiling {
                 hint("Click anything to hide it   ⌘Z undo   esc done")
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -528,7 +543,7 @@ struct ContentView: View {
         // SplitStage owns the field whenever Split View is enabled, including
         // an ordinary tab that is not currently paired. Drawing it here too
         // leaves two offset address fields on a blank tab.
-        if browser.fieldShowing, !browser.prefs.splitView {
+        if browser.fieldShowing, !browser.prefs.splitView || browser.wallPresented {
             Omnibox(browser: browser, over: !(browser.active?.isBlank ?? true))
                 // Centred on the page, not on the window. The column of tabs
                 // is not what the field is standing over, and dimming it along
@@ -700,7 +715,8 @@ struct ContentView: View {
         guard !browser.fieldShowing, browser.editingTab == nil else { return }
         DispatchQueue.main.async {
             guard !browser.fieldShowing, browser.editingTab == nil else { return }
-            guard let web = browser.active?.web, let window = web.window else { return }
+            guard let tab = browser.active, !tab.isWall, let window = tab.web.window else { return }
+            let web = tab.web
             if let responder = window.firstResponder as? NSView,
                responder === web || responder.isDescendant(of: web) { return }
             window.makeFirstResponder(web)
@@ -975,7 +991,7 @@ struct ContentView: View {
     /// keystrokes because this runs first.
     private func watchKeys() {
         guard keys == nil else { return }
-        keys = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown]) { event in
+        keys = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged, .leftMouseDown]) { event in
             // A click on the tab switcher, in this window only (see
             // Browser.clickTabSwitcher), turned into the top-left coordinates
             // SwiftUI's frames are in.
@@ -990,6 +1006,7 @@ struct ContentView: View {
             // those of windows that aren't a browser's (a panel, the little
             // window).
             guard mine(event) else { return event }
+            if event.type == .keyUp { CanvasSurface.owning(event.window?.firstResponder)?.releaseKey(event); return event }
             guard event.type == .keyDown else {
                 // ⌃ let go of switches to the tab the switcher is on.
                 if browser.tabSwitcher.active, !event.modifierFlags.contains(.control) {
@@ -1071,7 +1088,7 @@ struct ContentView: View {
         guard let window, event.window === window else { return false }
         return !browser.tuning && !browser.recalling && !browser.hoarding &&
             !browser.bookmarking && !browser.welcoming && !browser.managing &&
-            !browser.reviewing && !browser.finding && !browser.bookmarksOpen &&
+            !browser.capturingUI && !browser.wallPresented && !browser.reviewing && !browser.finding && !browser.bookmarksOpen &&
             !browser.veiling && !browser.summoning && !browser.makingSpace &&
             browser.peekTab == nil && browser.editingTab == nil &&
             browser.asking == nil && browser.offering == nil && browser.suggesting == nil
@@ -1083,6 +1100,8 @@ struct ContentView: View {
     ]
 
     private func take(_ event: NSEvent) -> Bool {
+        // The floating player's keys belong to its source video, not the active tab.
+        if Float.owns(event.window) { return Float.take(event) }
         // A small window's keys are its own (see Little.swift).
         if let little = LittleWindow.owning(event.window) { return little.take(event) }
         // An extension's popup window: ⌘W closes it, not a tab of the
@@ -1095,6 +1114,8 @@ struct ContentView: View {
         }
         // A key being typed into Settings › Shortcuts is for the box.
         guard !ShortcutStore.shared.recording else { return false }
+        if browser.wallPresented, browser.window?.attachedSheet != nil { return false }
+        if let canvas = CanvasSurface.owning(event.window?.firstResponder), canvas.take(event) { return true }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         let controlTab = event.keyCode == 48 && flags.contains(.control)

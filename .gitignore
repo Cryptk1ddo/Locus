@@ -3,6 +3,7 @@
 build/
 .swiftpm/
 *.xcuserstate
+xcuserdata/
 .DS_Store
 
 # Python's bytecode cache, left in Tests/ by the probe scripts.
@@ -13,3 +14,10 @@ __pycache__/
 *.provisionprofile
 *.p12
 *.mobileprovision
+
+# Local QA evidence, credentials and environment files.
+artifacts/
+.env
+.env.*
+!.env.example
+*.key

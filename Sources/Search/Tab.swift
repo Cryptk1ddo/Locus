@@ -27,7 +27,7 @@ enum Web {
     /// opened by a link inherits its opener's configuration, handlers
     /// included, and registering a name twice is a hard crash.
     @MainActor static func release(_ controller: WKUserContentController) {
-        for name in [ScrollRelay.name, VeilRelay.name, FormRelay.name, ImageRelay.name,
+        for name in [NightPolicyRelay.name, UICapture.handler, ScrollRelay.name, VeilRelay.name, FormRelay.name, ImageRelay.name,
                      StoreRelay.name, PasskeyRelay.name, MiddleRelay.name, IconRelay.name] {
             controller.removeScriptMessageHandler(forName: name, contentWorld: world)
             controller.removeScriptMessageHandler(forName: name, contentWorld: .page)
@@ -229,6 +229,13 @@ struct ReadingFill: View {
 
 @MainActor
 final class Tab: ObservableObject, Identifiable {
+    /// Native content belongs to its Space; the inert address is only a session identifier.
+    private(set) var wallSpaceID: UUID?
+    var isWall: Bool { wallSpaceID != nil }
+    var wallSourceID: Tab.ID?
+    var wallBinding: WallBinding?
+    weak var uiCapture: UICapture?
+    private(set) var captureDocumentID = UUID()
     let id = UUID()
 
     /// The page. Built the first time anyone asks for it, not when the tab
@@ -250,7 +257,7 @@ final class Tab: ObservableObject, Identifiable {
     /// ordinary tab, and a private one only when extensions were allowed
     /// there as it was made (a controller can't be added to a page later).
     @available(macOS 15.4, *)
-    var carriesExtensions: Bool { configuration.webExtensionController != nil }
+    var carriesExtensions: Bool { !isWall && configuration.webExtensionController != nil }
     /// Where its cookies and sign-ins are kept.
     var store: WKWebsiteDataStore { configuration.websiteDataStore }
     /// Whoever handles navigation and windows for this page; applied when
@@ -284,9 +291,11 @@ final class Tab: ObservableObject, Identifiable {
     /// connection, and which passwords a sign-in box is offered, go by this
     /// one, set when the new page has arrived.
     @Published private(set) var committed: URL?
-    var pageAddress: URL? { committed ?? address }
+    var pageAddress: URL? { isWall ? nil : committed ?? address }
 
     func didCommit() {
+        uiCapture?.cancel()
+        captureDocumentID = UUID()
         // A new document: whatever the old one waited for under its field
         // went with it.
         if let built { Passkeys.shared.forget(built) }
@@ -308,6 +317,7 @@ final class Tab: ObservableObject, Identifiable {
     private var heldOver: URL?
 
     func hold(_ url: URL) {
+        uiCapture?.cancel()
         held = url
         heldOver = built?.backForwardList.currentItem?.url
         address = url
@@ -336,7 +346,7 @@ final class Tab: ObservableObject, Identifiable {
     /// restoring the HTML gives you a page that looks right and does nothing,
     /// because every listener the page had was thrown away with it.
     func toggleReader(_ done: @escaping (Bool) -> Void) {
-        guard !isBlank else {
+        guard !isWall, !isBlank else {
             done(false)
             return
         }
@@ -370,6 +380,7 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     func adoptIcon() {
+        guard !isWall else { return }
         guard let site = address.flatMap(Favicons.site) else {
             icon = nil
             return
@@ -407,6 +418,7 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     func applyRememberedZoom() {
+        guard !isWall else { return }
         guard let host = address?.host() else { return }
         let kept = (Store.settings.object(forKey: "zoom." + host) as? Double).map { CGFloat($0) }
             ?? Tab.defaultZoom
@@ -481,6 +493,7 @@ final class Tab: ObservableObject, Identifiable {
 
     private let relay = ScrollRelay()
     private let veils_ = VeilRelay()
+    private let nightPolicy = NightPolicyRelay()
     private let forms = FormRelay()
     private let images = ImageRelay()
     private let shop = StoreRelay()
@@ -577,10 +590,20 @@ final class Tab: ObservableObject, Identifiable {
         return "New Tab"
     }
 
-    init(shy: Bool = false, bench: Bool = false, configuration: WKWebViewConfiguration? = nil) {
+    init(shy: Bool = false, bench: Bool = false, configuration: WKWebViewConfiguration? = nil, wallSpace: UUID? = nil) {
         self.shy = shy
         self.bench = bench
         self.configuration = configuration ?? Web.configuration(shy: shy)
+        wallSpaceID = wallSpace
+        if let wallSpace {
+            address = Self.wallAddress(wallSpace)
+            title = "Wall"
+            icon = NSImage(systemSymbolName: "rectangle.3.group", accessibilityDescription: "Wall")
+        }
+    }
+
+    static func wallAddress(_ space: UUID) -> URL {
+        URL(string: "locus://wall/\(space.uuidString)")!
     }
 
     private func build() -> PageView {
@@ -627,6 +650,8 @@ final class Tab: ObservableObject, Identifiable {
         // opener's.
         let controller = web.configuration.userContentController
         Web.release(controller)
+        nightPolicy.tab = self
+        controller.addScriptMessageHandler(nightPolicy, contentWorld: Web.world, name: NightPolicyRelay.name)
         controller.add(relay, contentWorld: Web.world, name: ScrollRelay.name)
         controller.add(veils_, contentWorld: Web.world, name: VeilRelay.name)
         controller.add(images, contentWorld: Web.world, name: ImageRelay.name)
@@ -660,6 +685,7 @@ final class Tab: ObservableObject, Identifiable {
                         if fresh == self.heldOver { return }
                         self.held = nil
                     }
+                    if self.address != fresh { self.uiCapture?.cancel() }
                     let freshHost = fresh.host()?.lowercased()
                     let currentHost = self.address?.host()?.lowercased()
                     let moved = freshHost != currentHost
@@ -700,6 +726,7 @@ final class Tab: ObservableObject, Identifiable {
     /// Between two fifths and three times, which is as far as a page is worth
     /// pushing in either direction.
     func magnify(to value: CGFloat) {
+        guard !isWall else { return }
         let wanted = min(3, max(0.4, value))
         guard abs(wanted - web.pageZoom) > 0.004 else { return }
         web.pageZoom = wanted
@@ -708,11 +735,12 @@ final class Tab: ObservableObject, Identifiable {
         onZoom?(self, wanted)
     }
 
-    func magnify(by factor: CGFloat) { magnify(to: web.pageZoom * factor) }
+    func magnify(by factor: CGFloat) { guard !isWall else { return }; magnify(to: web.pageZoom * factor) }
 
     /// ⌘0 undoes both kinds of zoom at once — whichever one you reached for —
     /// back to the size every site starts at.
     func resetZoom() {
+        guard !isWall else { return }
         magnify(to: Tab.defaultZoom)
         guard web.magnification != 1 else { return }
         web.magnification = 1
@@ -725,11 +753,15 @@ final class Tab: ObservableObject, Identifiable {
     /// pointing mode, and this site's stylesheet of things you have hidden. The
     /// stylesheet goes in before the document has a body, so nothing is ever
     /// seen arriving and then leaving again.
+    func refreshNightColors() { arm(hiding: veils); NightColors.shared.apply(to: self) }
+    let nightToken = UUID().uuidString
+
     func arm(hiding css: String) {
         veils = css
         guard let built else { return }
         let controller = built.configuration.userContentController
         controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(source: NightColors.shared.script(for: self), injectionTime: .atDocumentEnd, forMainFrameOnly: false, in: Web.world))
         controller.addUserScript(
             WKUserScript(source: ScrollRelay.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: Web.world)
         )
@@ -807,8 +839,8 @@ final class Tab: ObservableObject, Identifiable {
         built?.evaluateInSearch(Veiling.style(css))
     }
 
-    func startPicking() { web.evaluateInSearch("window.__officeVeil && window.__officeVeil.on()") }
-    func stopPicking() { web.evaluateInSearch("window.__officeVeil && window.__officeVeil.off()") }
+    func startPicking() { guard !isWall else { return }; web.evaluateInSearch("window.__officeVeil && window.__officeVeil.on()") }
+    func stopPicking() { guard !isWall else { return }; web.evaluateInSearch("window.__officeVeil && window.__officeVeil.off()") }
 
     func foundSignIn() { onSignIn?(self) }
 
@@ -905,6 +937,7 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     func unpeek(_ css: String) {
+        guard !isWall else { return }
         web.evaluateInSearch("window.__officeVeil && window.__officeVeil.unpeek(`\(escape(css))`)")
     }
 
@@ -928,6 +961,7 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     func go(to url: URL) {
+        guard !isWall else { return }
         // Judged by the page it shows, not by how it was made: a tab an
         // extension's page opened with window.open is built from that
         // extension's configuration too. A tab with no page yet was just
@@ -962,6 +996,7 @@ final class Tab: ObservableObject, Identifiable {
     /// Brought back from the last session: everything the row needs to draw it,
     /// and nothing fetched.
     func restore(url: URL, title: String, name: String? = nil) {
+        guard !isWall else { return }
         address = url
         self.title = title
         self.name = name
@@ -1014,6 +1049,7 @@ final class Tab: ObservableObject, Identifiable {
     /// binds the store when the view is made, so keep its restorable state
     /// and build the view again with the destination's store.
     func rehome(in space: UUID) {
+        if wallBinding?.spaceID != space { wallBinding = nil }
         guard !shy, !bench, store !== Spaces.store(for: space) else { return }
         if let built {
             memory = built.isLoading ? nil : built.interactionState
@@ -1192,6 +1228,7 @@ final class Tab: ObservableObject, Identifiable {
     /// Asked anything at all, the page answers with one particular error, and
     /// the answer to that is to load it again.
     func revive() {
+        guard !isWall else { return }
         if stale {
             stale = false
             recoverFromCrash()
@@ -1245,6 +1282,7 @@ final class Tab: ObservableObject, Identifiable {
     /// loading it yet. Saying so now keeps the empty state from flashing up in
     /// the frame between the tab appearing and the page committing.
     func setAddressOptimistically(_ url: URL) {
+        guard !isWall else { return }
         address = url
         failure = nil
         adoptIcon()
@@ -1254,6 +1292,7 @@ final class Tab: ObservableObject, Identifiable {
     /// page, and an address kept for it downloads the file once more
     /// whenever the tab is opened (see Browser.dropEmpty).
     func forget() {
+        guard !isWall else { return }
         address = nil
         icon = nil
     }
@@ -1263,6 +1302,7 @@ final class Tab: ObservableObject, Identifiable {
     /// True when the web view holds nothing — never loaded, or emptied —
     /// while the tab still names a page. The white page, in other words.
     var hollow: Bool {
+        guard !isWall else { return false }
         guard let built else { return address != nil }
         guard let there = built.url else { return address != nil }
         return there.absoluteString == "about:blank" && pending == nil && address != nil
@@ -1271,6 +1311,7 @@ final class Tab: ObservableObject, Identifiable {
     /// A view that has lost its document is given the address back instead:
     /// there is nothing else for it to reload.
     func reload(fromOrigin: Bool = false) {
+        guard !isWall else { return }
         // A pin put down with ⌘W has no view left to reload; waking it is
         // the reload.
         guard !wake() else { return }
@@ -1284,11 +1325,11 @@ final class Tab: ObservableObject, Identifiable {
             web.reload()
         }
     }
-    func stop() { web.stopLoading() }
+    func stop() { guard !isWall else { return }; web.stopLoading() }
     /// Straight through, every time. A page that has to be fetched again is
     /// fetched again — nothing is kept behind to make that look otherwise.
-    func back() { web.goBack() }
-    func forward() { web.goForward() }
+    func back() { guard !isWall else { return }; web.goBack() }
+    func forward() { guard !isWall else { return }; web.goForward() }
 
     /// Called when the tab is thrown away. Without it the view keeps running
     /// whatever the page left behind — timers, video, sockets.
@@ -1308,6 +1349,7 @@ final class Tab: ObservableObject, Identifiable {
     /// back-forward cache. The tab keeps its address; `web` builds again the
     /// next time anyone asks for it.
     private func discard() {
+        uiCapture?.cancel()
         watch = []
         ears.stop()
         guard let web = built else { return }

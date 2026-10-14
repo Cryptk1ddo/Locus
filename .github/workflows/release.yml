@@ -1,0 +1,63 @@
+name: Release
+on:
+  push:
+    tags: ['v[0-9]*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: test "$RELEASE_TAG" = "v$(tr -d '[:space:]' < VERSION)"
+      - run: swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize
+  package:
+    needs: test
+    runs-on: macos-26
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build development release
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: python3 scripts/package-app.py --arch "$RELEASE_ARCH"
+      - name: Verify artifacts
+        env:
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: python3 scripts/verify-package.py "build/release/$RELEASE_ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: |
+            build/release/${{ matrix.arch }}/*.zip
+            build/release/${{ matrix.arch }}/*.dmg
+            build/release/${{ matrix.arch }}/*.json
+            build/release/${{ matrix.arch }}/*.txt
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish tested release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release-assets/* --verify-tag --title "Locus $RELEASE_TAG" --notes-file docs/RELEASE_NOTES.md

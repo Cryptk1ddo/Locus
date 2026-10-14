@@ -163,7 +163,7 @@ struct Omnibox: View {
                     // site rather than a magnifying glass. Nothing is fetched
                     // for one that isn't known; the glass is what the row
                     // wears until then.
-                    if let site = Favicons.site(offer.url), let icon = Favicons.shared.cached(site) {
+                    if let url = offer.url, let site = Favicons.site(url), let icon = Favicons.shared.cached(site) {
                         Image(nsImage: icon)
                             .resizable()
                             .interpolation(.high)
@@ -185,12 +185,16 @@ struct Omnibox: View {
                     Image(systemName: "command")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Palette.muted)
+                case .object:
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Palette.muted)
                 default:
                     EmptyView()
                 }
                 // The row reads as 1.0.4's did, without the www; the key
                 // itself keeps it, for completing and going there.
-                Text(Address.withoutWWW(offer.key))
+                Text(offer.displayKey)
                     .font(.system(size: 13))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)

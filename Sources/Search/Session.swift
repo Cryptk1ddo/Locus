@@ -19,6 +19,10 @@ enum Session {
         var pinID: UUID? = nil
         /// A pin kept as a row (see Tab.listed). Nil for a square.
         var listed: Bool? = nil
+        /// A deliberately saved page object in this row's Space.
+        var objectID: UUID? = nil
+        /// Explicit native content; the URL alone never creates a native tab.
+        var nativeKind: String? = nil
     }
 
     struct Shape: Codable {
@@ -89,7 +93,7 @@ enum Session {
     }
 }
 
-// The groups are the one part of the file an older or newer version may not
+// Groups and optional object bindings are parts an older or newer version may not
 // agree on, so they are read leniently: a value that doesn't make sense is
 // taken for no groups at all, never for a file that won't decode. That would
 // put the whole session in quarantine and bring back not a single tab. An
@@ -97,7 +101,7 @@ enum Session {
 // key it isn't asked for. In extensions, so the memberwise initialisers stay.
 
 extension Session.Entry {
-    private enum Keys: String, CodingKey { case url, title, pin, name, home, groupID, pinID, listed }
+    private enum Keys: String, CodingKey { case url, title, pin, name, home, groupID, pinID, listed, objectID, nativeKind }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -109,6 +113,9 @@ extension Session.Entry {
         groupID = try? c.decodeIfPresent(UUID.self, forKey: .groupID)
         pinID = try? c.decodeIfPresent(UUID.self, forKey: .pinID)
         listed = try? c.decodeIfPresent(Bool.self, forKey: .listed)
+        objectID = try? c.decodeIfPresent(UUID.self, forKey: .objectID)
+        nativeKind = c.contains(.nativeKind) && (try? c.decodeNil(forKey: .nativeKind)) != true
+            ? (try? c.decode(String.self, forKey: .nativeKind)) ?? "unknown" : nil
     }
 }
 

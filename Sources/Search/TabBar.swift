@@ -159,6 +159,7 @@ struct TabBar: View {
                         if !browser.prefs.navigationLeft {
                             Helm(browser: browser).padding(.trailing, 8)
                         }
+                        WallDoor(browser: browser)
                         BookmarkDoor(browser: browser, arrowEdge: .bottom)
                     }
                     .background {
@@ -363,7 +364,7 @@ struct TabBar: View {
     /// until they have been, the helm and the bookmarks stand in for them —
     /// unless the helm leads, when nothing at the far end may be a real zero.
     private func room(in strip: CGFloat) -> CGFloat {
-        let far = doors > 0 || browser.prefs.navigationLeft ? doors : Metrics.helm + 26
+        let far = doors > 0 || browser.prefs.navigationLeft ? doors : Metrics.helm + 52 + Metrics.tabGap
         return max(0, strip - lights - dot - leading - 12 - Metrics.plusWidth - far - 3 * Metrics.tabGap)
     }
 
@@ -468,8 +469,8 @@ struct Helm: View {
                 ) {
                     if tab.loading { tab.stop() } else { browser.reload() }
                 }
-                .disabled(tab.isBlank)
-                .opacity(tab.isBlank ? 0.3 : 1)
+                .disabled(tab.isBlank || tab.isWall)
+                .opacity(tab.isBlank || tab.isWall ? 0.3 : 1)
             }
             .animation(Motion.quick, value: back)
             .animation(Motion.quick, value: forward)
@@ -584,7 +585,7 @@ private struct TabPill: View {
                 if tab.loading {
                     Ring()
                 } else {
-                    Mark(icon: prefs.glyph == .icons ? tab.icon : nil, letter: tab.monogram, size: 15, dim: tab.asleep)
+                    Mark(icon: prefs.glyph == .icons || tab.isWall ? tab.icon : nil, letter: tab.monogram, size: 15, dim: tab.asleep)
                 }
             }
             .frame(width: 16, height: 16)
@@ -601,7 +602,7 @@ private struct TabPill: View {
                 TabAddressField(browser: browser)
                     .frame(height: 16)
             } else {
-                if prefs.glyph == .icons, !tab.isBlank {
+                if prefs.glyph == .icons || tab.isWall, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
                 if tab.bench {
@@ -969,10 +970,10 @@ struct TabMenu: View {
         let rows = browser.prefs.showsPinRows
         if tab.pin == nil {
             Button("Pin") { browser.pin(tab) }
-                .disabled(tab.isBlank || tab.shy)
+                .disabled(tab.isBlank || tab.shy || tab.isWall)
             if rows {
                 Button("Pin as Row") { browser.pin(tab, listed: true) }
-                    .disabled(tab.isBlank || tab.shy)
+                    .disabled(tab.isBlank || tab.shy || tab.isWall)
             }
         } else {
             if rows {
@@ -989,7 +990,7 @@ struct TabMenu: View {
             }
             Button("Unpin") { browser.unpin(tab) }
         }
-        if browser.prefs.usesSpaces, !tab.bench,
+        if browser.prefs.usesSpaces, !tab.bench, !tab.isWall,
            tab.address.flatMap({ Browser.extensionHost(of: $0) }) == nil {
             Menu("Move to Space") {
                 ForEach(browser.spaces.filter { $0.id != browser.spaceID }) { space in
@@ -1025,10 +1026,10 @@ struct TabMenu: View {
                 // Beside the page on screen; on that page itself, an empty
                 // page beside it.
                 Button("Open in Split View") { browser.openInSplit(tab) }
-                    .disabled(tab.bench)
+                    .disabled(tab.bench || tab.isWall || browser.active?.isWall == true)
             }
         }
-        if tab.pin == nil, !tab.bench {
+        if tab.pin == nil, !tab.bench, !tab.isWall {
             // Another window, or a new one (see Browser.moveToWindow).
             let others = Browsers.all.filter { $0 !== browser && $0.isOpen && $0.extensionPopup == nil }
             if others.isEmpty {

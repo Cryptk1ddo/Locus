@@ -1,125 +1,97 @@
-# Search
+# Locus
 
-A small, fast, quiet web browser for the Mac, by [Office Commun](https://officecommun.com).
+A native macOS browser with contextual Spaces, a visual Wall, structured objects,
+Canvas files, UI capture and a local browser automation interface. Built with
+SwiftUI, AppKit and WKWebView, preserving the lightweight architecture of
+[Search](https://github.com/driceroland/Search).
 
-![Search, with its tabs down the left and a page taking the rest of the window](.github/screenshot.png)
+[Download releases](https://github.com/Cryptk1ddo/Locus/releases) ·
+[Report a bug](https://github.com/Cryptk1ddo/Locus/issues/new/choose) ·
+[Development workflow](docs/DEVELOPMENT.md)
 
-**[Download for macOS →](https://officecommun.com/search)** · macOS 14 or later · free · about 6 MB
+Locus is in active development. Current downloads are ad-hoc signed development
+builds; Apple Developer ID signing and notarization are planned. Review
+[release notes](docs/RELEASE_NOTES.md) before installing.
 
-Or with [Homebrew](https://brew.sh): `brew install --cask driceroland/tap/search`
+## Build and run
 
----
+Requires macOS 14+ and Xcode 26 or newer (Swift 6). Extensions need macOS 15.4+.
 
-## What it is
-
-Search is a browser with nothing in the way. A row of tabs — across the top or down the left, your choice — and the page. There is no toolbar, no start page, no sidebar of suggestions, no account to sign into, nothing that wants your attention. You type an address or a few words in one field and you are on the page.
-
-It uses **WebKit**, the engine already inside every Mac (it is what Safari runs on). That is why the whole app is about 3 MB on disk and opens instantly: there is no second copy of Chromium to download, update and keep in memory.
-
-It was built by a design studio that spends its whole day in a browser and was tired of the ones that had become products. This one is a tool.
-
-## What it does
-
-- **One field.** Type an address and you go there; type words and you search. It finishes addresses from your own history and never sends what you type anywhere until you press Return.
-- **Tabs that stay out of the way.** Pin the pages you keep open all day and they shrink to a letter or their icon. Tabs from your last session come back instantly and cost nothing until you click them. `⌘K` lists your open tabs by name.
-- **Two pages side by side.** Turn on Split View in Settings › Tabs, then drag a tab onto a page or choose Tabs › Split Current Page. Drag the divider to resize the panes; the outlined pane receives page commands. Pairs and their widths come back with their Space, including after a restart.
-- **Reading mode.** `⇧⌘R` strips a page down to the article.
-- **Hide anything, for good.** `⇧⌘H`, then click a cookie banner, a newsletter overlay, a rail of "related" nonsense — it goes, and it is still gone on that site next time, before the page has drawn a single frame.
-- **An ad blocker that runs before the page.** Third-party trackers and ad networks are stopped at the network level, so there is nothing to render and nothing to slow down. On by default, off per site if something breaks.
-- **Video that follows you.** `⇧⌘P` lifts the video out of the page into a small window that stays above everything, including other apps.
-- **Passwords, in your keychain.** Search offers to save a sign-in once it has actually worked, and offers your saved accounts, and the Mac's passkeys for the site, under the field when you click it — the way Safari does, never filling anything on its own. Everything lives in the macOS keychain, encrypted by the system, readable only by Search. Bring yours in from Chrome, Arc, Dia, Brave or Edge in one click; nothing leaves the Mac.
-- **Light, dark, or the Mac's own.** The frame and the pages follow.
-- **Bookmarks, history, downloads** — each a panel, each searchable, each one keystroke away.
-- **Chrome extensions, without Chrome.** Paste a Chrome Web Store link in Settings › Extensions, or open the extension's page in Search and press Add. It runs on WebKit's own extension engine — the one Safari uses — and where Chrome has APIs WebKit doesn't (bookmarks, history, downloads, side panel, offscreen documents, fonts, notifications, speech, OAuth sign-in), Search fills them in itself. They live behind the puzzle button; pin the ones you use often. Building your own? Load its folder as an unpacked extension and press Reload after each change, as in Chrome's developer mode. macOS 15.4 or later.
-- **Updates itself, quietly.** Once a day it checks for a newer build, downloads it, verifies it is signed by Office Commun, and swaps it in for the next launch. Nothing restarts on its own.
-
-## What it doesn't do
-
-On purpose:
-
-- No extension you have to install to feel at home. Blocking ads, hiding clutter, reading mode, picture-in-picture and passwords are built in; extensions are there for everything else.
-- No sync, no account, no cloud. Your tabs, history and passwords are on your Mac and nowhere else.
-- No telemetry, no analytics, no crash reports sent anywhere. The only things that leave your Mac are the pages you ask for, their icons, and one small request a day to see whether there is a newer version.
-- One window. Tabs are the only kind of "new" there is.
-
-## Privacy, concretely
-
-| What | Where it is | Who can read it |
-|---|---|---|
-| Passwords | The macOS login keychain, as ordinary keychain items tagged `Search` | Search, signed by Office Commun. Any other app triggers the system's permission dialog. |
-| History, bookmarks, open tabs, hidden elements | Small JSON files in `~/Library/Application Support/Search/` | You. |
-| Cookies and site data | WebKit's own store for the app | The sites that set them, as in any browser. |
-| Extensions | Unpacked in `~/Library/Application Support/Search/Extensions/`, their data in WebKit's extension store | Each extension, within the permissions you accepted when adding it. |
-| Anything else | Nowhere. There is no server. | — |
-
-A **private tab** (`⇧⌘N`) has its own cookie jar and leaves nothing behind when it closes.
-
-Apps you allow in System Settings › Privacy & Security › Automation can read the address and title of your tabs with AppleScript; private tabs are never shown.
-
-## Keyboard
-
-| | |
-|---|---|
-| `⌘L` address · `⌘K` switch tab · `⌘T` new tab · `⌘W` close · `⇧⌘T` reopen | `⌘[` `⌘]` back, forward · `⇧⌘[` `⇧⌘]` previous, next tab · `⌘1`–`⌘9` jump |
-| `⇧⌘S` tabs across the top or down the left · `⌘S` fold the sidebar away · `⇧⌘B` bookmark this page | `⇧⌘R` reading mode · `⇧⌘P` float the video · `⇧⌘H` hide something · `⇧⌘U` what is hidden here |
-| `⌘F` find · `⌘D` duplicate tab · `⇧⌘C` copy address · `⇧⌘V` paste and go | `⌘Y` history · `⇧⌘J` downloads · `⌘,` settings · `⌥⌘L` passwords |
-
-`⌘R` reloads the page; `⌥⌘R` reloads it from origin, checking everything cached with the site again, as Safari's Reload Page From Origin.
-
-`⌃Tab` and `⌃⇧Tab` walk along the row of tabs; `Tab` stays the page's, for moving through a form. `esc` puts away whatever is open.
-
-With Split View on, `⌥⌘N` splits the current page and `⌃⌘←` / `⌃⌘→` go from one page to the other. `⌘W` closes the focused tab and gives the remaining page the whole area. Tabs › Separate Split Tabs keeps both tabs open separately.
-
----
-
-## For developers
-
-### Why the source is here
-
-So anyone can read exactly what a browser handling their passwords and history is doing, build it themselves, or fix something that bothers them. The code is small enough to actually read — about 42,000 lines of Swift, no dependencies beyond what Apple ships with macOS, one file per concern.
-
-### Building it
-
-- macOS 14 or later, Xcode 16 / Swift 6 toolchain
-- `swift build` — runs the app straight from the SwiftPM binary
-- `./build.sh` — assembles a real, double-clickable `Search.app` in `build/`, ad-hoc signed so it runs on your own Mac
-
-A build you make yourself won't be notarized or carry Office Commun's Developer ID, so the first launch needs a right-click → Open (or an allow in System Settings → Privacy & Security). That's expected — it's the same thing that happens with any app that isn't from the App Store or a notarized DMG. Your own build also keeps its passwords apart from a signed Search's: the keychain tells the two apart by their signatures.
-
-`./build.sh release dmg` also makes `Search.dmg` / `Search.zip`. `./build.sh release ship` additionally notarizes and staples — that step needs a Developer ID certificate and Apple credentials, so it only really does anything for Office Commun's own releases.
-
-### How it's put together
-
-- **SwiftUI** for everything drawn, **AppKit** for the handful of things SwiftUI doesn't reach on macOS (the window's title bar, dragging the window by an empty part of the tab row), **WKWebView** for pages.
-- One `Tab` per page. Its web view is built lazily — a tab restored from last session doesn't cost a process until you switch to it. That's most of why launching with twenty tabs is still instant. Each page runs in WebKit's own content process, as in Safari; a tab you close is really gone.
-- The ad blocker is a `WKContentRuleList` compiled once at launch and enforced inside WebKit's networking, before a request is made — zero cost at run time, unlike a JavaScript blocker.
-- Hidden elements are a per-site list of selectors injected as a stylesheet at document start, so nothing is ever seen appearing and vanishing.
-- Every colour is a light/dark pair in `Design.swift`, resolved by the window's appearance; nothing else in the code knows which mode it is in.
-- Extensions run on `WKWebExtension` (macOS 15.4+). `Crx.swift` fetches an extension from the Chrome Web Store's public update address and checks the CRX3 signature against the extension's id before anything is unpacked. `Extensions.swift` is the browser's side of WebKit's contract — tabs, the window, permissions, popups. `ExtensionShims.swift` adds, at install, a small script to the extension's worker, pages and content scripts: it defines the Chrome APIs WebKit lacks — `userScripts`, `privacy`, `browsingData`, `sessions`, the old FileSystem API and more — as calls answered natively by Search, and mends the places where WebKit behaves differently from Chrome: replies from pages that don't answer, listeners added after a worker starts, workers WebKit loses track of, members and constants it leaves out. Extension pages are served from `chrome-extension://<id>/`, the address they have in Chrome, so servers and sites recognise them. `./bench ext-*` drives all of it from the shell against a test run. `ExtensionNative.swift` speaks Chrome's native messaging to hosts registered in Chrome's `NativeMessagingHosts` folders.
-- `Sources/Search/` is one file per concern: `Vault.swift` is the keychain, `Shield.swift` the ad blocker, `Curtain.swift` the hidden elements, `Session.swift` what comes back at launch, `Updater.swift` the update, `Bench.swift` the test socket, and so on. There's no framework of its own to learn first.
-
-### Testing it without closing it
-
-Turn on **Settings › General › Let a script drive Search** and the running app listens on a Unix socket in its own folder (readable by your user only). `./bench` at the root of the repository speaks it:
-
-```
-./bench open https://example.com     # a tab of its own, at the end of your row, marked with a flask
-./bench wait 2e7e7e89                 # until it has loaded
-./bench text 2e7e7e89                 # the page's text
-./bench shot 2e7e7e89 out.png         # a picture of it
-./bench click 2e7e7e89 "button.go"    # click, type, submit — through the page's own events
-./bench probe                         # the window's state: open panels, a modal, every window
-./bench close all
+```sh
+swift test -c release --arch arm64 --jobs 2 -Xswiftc -Osize
+python3 scripts/package-app.py --arch arm64
+open build/release/arm64/Locus.app
 ```
 
-Bench tabs are never selected for you, never enter the session or the history, and go when the script says so. It is how this browser is tested while somebody is using it.
+For Intel, use `--arch x86_64`. The package command creates `Locus.app`, a ZIP,
+a drag-to-Applications DMG, checksums and a GitHub update manifest under
+`build/release/<architecture>/`. `scripts/verify-package.py` verifies these outputs.
 
-`python3 Tests/split_view.py`, after `./build.sh`, checks Split View through the app's own model in a hidden test run with its own settings and files, all removed afterwards. It never makes or shows a window; what can only be seen (dragging onto a page's edge, the divider under the pointer, the motion) is checked by hand on a release candidate.
+`Locus.xcodeproj` provides an isolated development Run configuration. The inherited
+`build.sh`, `bench` and SwiftPM target retain the internal name `Search` so existing
+regression probes continue to work. Distributable packages use the name **Locus**,
+bundle identifier `com.cryptk1ddo.locus` and an original icon.
 
-### Contributing
+## Updates and development
 
-Issues and pull requests are genuinely welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how this is reviewed and what tends to get merged. The short version: small changes, no new dependencies, nothing that phones home. Found a security problem? Please report it privately, as [SECURITY.md](SECURITY.md) says.
+Every pull request and push to `main` runs model/security tests, a secret scan
+and an Apple Silicon package build. Version tags run tests, build Apple Silicon
+and Intel packages, and publish GitHub Releases. See [DEVELOPMENT.md](docs/DEVELOPMENT.md)
+for the branch, issue and release workflow.
 
-### License
+The app checks this repository's release manifest at launch and hourly. Development
+builds announce newer releases and open GitHub for manual download. Signed
+installations require a signed manifest, archive checksum, matching bundle identity
+and Developer ID team before replacing the app; configuration is documented in
+[DEVELOPMENT.md](docs/DEVELOPMENT.md). The browser never executes a GitHub branch.
 
-MIT — see [LICENSE](LICENSE). Do what you want with the code. "Search" and the app icon are Office Commun's; please rename a fork before distributing it under another name.
+## Locus workspace features
+
+**Night Colors** is an opt-in built-in extension under **Settings → Extensions**. It adapts page surfaces, text and accents to the dark browser canvas while retaining photos, video and artwork. Automatic follows browser appearance and retains detected native dark themes; each site can use Automatic, Always adapt or Off. See the [contract, controls and native renders](docs/NIGHT_COLORS.md).
+
+The **Wall** button beside Bookmarks opens the current Space’s Wall in its own tab. **View → Open Wall** and the Space menu select that same tab. Switch back to a page without closing the Wall; Command-W closes the selected tab. **Add** names the source page from which the Wall was opened and saves a page or note, collects inspiration from the loaded page, saves an inspiration link, or invokes **Capture UI**. Pinterest, Are.na, Behance, Dribbble and Awwwards references share the same object model. Visited pages can retain a local viewport preview; a saved board link does not import its contents.
+
+Wall now uses a native Canvas interaction model: double-click ground to add text, double-click a text card to edit Markdown in place, drag ground to select, Shift-click to extend selection, and drag selected cards together. Space-drag or middle-drag pans; pinch or Command-scroll zooms around the pointer. Resize any card edge, Option-drag to duplicate, and use Command-Z / Shift-Command-Z for undo/redo. Four side handles create selectable, labelled connections. Groups, preset/custom colours, file/media/PDF cards, live web cards, image paste, and `.canvas` import/export are available through floating tools and contextual menus. See the [native Canvas workflow](docs/CANVAS_WORKFLOW.md) and [Canvas contract and parity tracking](docs/OBSIDIAN_CANVAS_PARITY.md). Exact Obsidian parity remains incomplete.
+
+Canvas caches, shared native vault watchers and hidden-page motion polling are covered by the [performance contract and measurements](docs/PERFORMANCE.md).
+
+Granted Markdown/text file cards edit in place with restart-recoverable drafts and external-change protection. Files outside the connected vault use explicit Save. See the [file editor contract](docs/CANVAS_FILE_EDITING.md).
+
+Whole-Wall and selected-card exports now include portable folders with granted files/saved previews and native PNG/PDF overviews. See [Canvas exports and sample output](docs/CANVAS_EXPORTS.md).
+
+Connect a folder through Wall settings to enable vault-note autosave. Local images, Markdown tables and note/heading/block embeds now render natively. External file changes pause saving and keep recovery drafts. See [vault workflows](docs/CANVAS_VAULT_AND_EMBEDS.md).
+
+Selected Canvas text cards support Space-local wiki links with aliases and heading/block targets, plus undoable task checkboxes. See the [content and PiP refinement](docs/CANVAS_PIP_REFINEMENT.md).
+
+Video picture-in-picture now includes a seekable timeline, elapsed/duration display, mute and focused-window keyboard controls. Return brings forward the source browser window. Live streams show Live; DVR stepping uses available seek ranges. See the [PiP workflow](docs/PIP_WORKFLOW.md).
+
+Connect research, notes, captures and design references; drag cards, resize their edges and pan/zoom the canvas. View positions are remembered per window and Space. Captures keep their DOM/CSS/geometry inspector. A completed page AI answer has an explicit **Save to Wall** action with source/model attribution; private conversations remain ephemeral. Use `wall: words` in the existing address field to find objects.
+
+Drag web links onto the Wall canvas to save inspiration at that location. A drop accepts up to 20 links, recognizes the existing providers, and saves the batch together without loading its pages. Drop positions respect pan and zoom. See the [link-drop contract](docs/WALL_LINK_DROPS.md) and [workflow screenshots](docs/WALL_LINK_DROP_WORKFLOW.md).
+
+Each Space keeps a previous Wall revision. A corrupt Wall offers explicit recovery while preserving its damaged file. Local previews have integrity checks and a per-Space quota; tabs keep working if workspace storage fails. See the [storage contract](docs/STORAGE_RECOVERY.md) and [native Wall tab contract](docs/WALL_TABS.md).
+
+See the [architecture and data contract](docs/INSPIRATION_GRAPH.md), [native workflow screenshots](docs/INSPIRATION_WORKFLOW.md) and [remaining development](docs/DEVELOPMENT_ROADMAP.md). Authenticated Pinterest/Are.na board/channel imports, file/PDF objects and production MCP/agent execution remain separate work.
+
+## Data and privacy
+
+Installed Locus stores sessions, history and workspace objects in
+`~/Library/Application Support/Locus/`. Settings and WebKit data belong to its
+bundle identifier, and saved passwords use Locus keychain labels. Development
+and automated test runs use isolated profiles via `SEARCH_PROBE`. No automatic
+migration from Search or earlier experimental profiles occurs; keep those profiles
+until you have explicitly exported/imported the data you need.
+
+GitHub update checks contact GitHub. Feedback opens an issue draft for you to
+review and submit. Page content stays local unless you explicitly use a configured
+AI provider. Secrets and private browsing data must never be committed or posted
+in issues. The local `bench` socket is opt-in for installed apps.
+
+## Attribution and license
+
+Forked from [cryptk1ddo/locus](https://github.com/cryptk1ddo/locus), based on
+[Search by Drice Roland / Office Commun](https://github.com/driceroland/Search).
+The original MIT copyright and license remain in [LICENSE](LICENSE).
+Upstream history and internal implementation names are retained. The Locus package
+uses its own branding; historical upstream changelog and roadmap entries are
+reference material, while GitHub Issues track Locus development.

@@ -361,9 +361,11 @@ extension Browser {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard let tab = tab(for: webView) else { return }
         dropQuestions(for: tab.id)
-        // In front of you: straight back, a reload beats a white page with a
-        // button on it. Behind another tab: the moment you come back to it.
-        if tab.id == activeID, !tab.isBlank {
+        // Every page in front of you, including the split pane without
+        // keyboard focus, comes straight back. Behind another tab: the
+        // moment you come back to it.
+        if visibleTabIDs.contains(tab.id), !tab.isBlank {
+            tab.stale = false
             tab.recoverFromCrash()
         } else {
             tab.stale = true

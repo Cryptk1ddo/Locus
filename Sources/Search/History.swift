@@ -8,7 +8,7 @@ struct Suggestion: Identifiable, Equatable {
     /// What you could type to get here, kept reversible for completion.
     let key: String
     let title: String
-    let url: URL
+    let url: URL?
     let kind: Kind
     /// Set when this is a page you already have open somewhere.
     var tab: UUID?
@@ -24,6 +24,8 @@ struct Suggestion: Identifiable, Equatable {
         case search
         /// Not a place either: something the app itself does.
         case command(AddressCommand)
+        /// A durable object in an explicitly scoped Space, never a URL.
+        case object(space: UUID, id: UUID)
 
         var isCommand: Bool { if case .command = self { return true }; return false }
     }
@@ -32,15 +34,20 @@ struct Suggestion: Identifiable, Equatable {
     /// ("Settings" typed with its capital), and two rows can't share a name.
     var id: String {
         if kind.isCommand { return "command " + key }
-        if case .visited = kind { return History.identity(for: url) }
+        if case .object(let space, let id) = kind { return "object \(space) \(id)" }
+        if case .visited = kind, let url { return History.identity(for: url) }
         return key
     }
 
-    /// A command goes nowhere, but the field still needs *a* URL to carry;
-    /// `take` and `submit` read the kind first and never follow this one.
+    var displayKey: String {
+        if case .object = kind { return key }
+        return Address.withoutWWW(key)
+    }
+
+    /// Commands and objects have typed targets rather than placeholder URLs.
     @MainActor
     static func command(_ command: AddressCommand) -> Suggestion {
-        Suggestion(key: command.title, title: "", url: URL(string: "about:blank")!, kind: .command(command))
+        Suggestion(key: command.title, title: "", url: nil, kind: .command(command))
     }
 }
 
@@ -387,9 +394,12 @@ final class History: ObservableObject {
     /// the site sends you on to its www. Only the www is let go of: the
     /// scheme, the port and the path's case still have to come out the same.
     private static func endings(of option: Suggestion) -> [(String, String)] {
-        var found = [(option.key, identity(for: option.url))]
+        if case .object = option.kind { return [] }
+        if option.kind.isCommand { return [] }
+        guard let url = option.url else { return [] }
+        var found = [(option.key, identity(for: url))]
         if option.key.lowercased().hasPrefix("www."),
-           var parts = URLComponents(url: option.url, resolvingAgainstBaseURL: false),
+           var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
            let host = parts.host, host.lowercased().hasPrefix("www.") {
             parts.host = String(host.dropFirst(4))
             if let bare = parts.url { found.append((String(option.key.dropFirst(4)), identity(for: bare))) }

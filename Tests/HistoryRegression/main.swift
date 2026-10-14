@@ -154,9 +154,9 @@ private func testRootCreditsKeepOriginAndDirectRootCountsOnce() {
     }
 
     let roots = history.suggestions(for: "ORIGIN.EXAMPLE.TEST", limit: 50).filter {
-        $0.url.host()?.lowercased() == "origin.example.test" && $0.url.path() == "/"
+        $0.url?.host()?.lowercased() == "origin.example.test" && $0.url?.path() == "/"
     }
-    let origins = Set(roots.map { "\($0.url.scheme ?? ""):\($0.url.port ?? 0)" })
+    let origins = Set(roots.map { "\($0.url?.scheme ?? ""):\($0.url?.port ?? 0)" })
     Checks.expect(origins == ["http:8080", "https:8080", "https:9090"], "root credits should preserve the visited scheme and port")
     Checks.expect(traces(history, host: "origin.example.test").count == 3, "synthetic root credits should not add rows to visible history")
 
@@ -190,10 +190,10 @@ private func testSuggestionIdsAndSafeCaseInsensitiveCompletion() {
     history.record(url("https://suggest.example.test/A?q=One"), title: "Query case")
 
     let options = history.suggestions(for: "SUGGEST.EXAMPLE.TEST", limit: 50)
-    Checks.expect(options.contains { $0.url.path() == "/A" }, "suggestion matching should ignore host letter case")
+    Checks.expect(options.contains { $0.url?.path() == "/A" }, "suggestion matching should ignore host letter case")
     Checks.expect(Set(options.map(\.id)).count == options.count, "suggestion ids should remain unique across case-sensitive URLs")
 
-    let upper = options.first { $0.url.path() == "/A" && $0.url.query() == "Q=One" }
+    let upper = options.first { $0.url?.path() == "/A" && $0.url?.query() == "Q=One" }
     if let upper {
         let safe = history.completion(for: "SUGGEST.EXAMPLE.TEST", among: [upper])
         Checks.expect(safe == "/A?Q=One", "completion should match the host case-insensitively")
@@ -210,9 +210,9 @@ private func testSuggestionIdsAndSafeCaseInsensitiveCompletion() {
     schemeHistory.record(url("http://scheme-id.example.test:3000/a?Q=One"), title: "HTTP")
     schemeHistory.record(url("https://scheme-id.example.test:3000/a?Q=One"), title: "HTTPS")
     let schemeOptions = schemeHistory.suggestions(for: "scheme-id.example.test", limit: 50).filter {
-        $0.url.host() == "scheme-id.example.test" && $0.url.path() == "/a" && $0.url.query() == "Q=One"
+        $0.url?.host() == "scheme-id.example.test" && $0.url?.path() == "/a" && $0.url?.query() == "Q=One"
     }
-    Checks.expect(Set(schemeOptions.map(\.url.scheme)).count == 2, "scheme-only URL variants should both remain suggestions")
+    Checks.expect(Set(schemeOptions.map { $0.url?.scheme }).count == 2, "scheme-only URL variants should both remain suggestions")
     Checks.expect(Set(schemeOptions.map(\.id)).count == schemeOptions.count, "scheme-only URL variants should have unique suggestion ids")
     for candidate in schemeOptions where candidate.key.count > 2 {
         let typed = String(candidate.key.dropLast())
@@ -220,12 +220,12 @@ private func testSuggestionIdsAndSafeCaseInsensitiveCompletion() {
             Checks.expect(false, "a proper prefix of a scheme-specific suggestion should complete")
             continue
         }
-        guard let completed = Address.url(from: typed + ending) else {
+        guard let completed = Address.url(from: typed + ending), let candidateURL = candidate.url else {
             Checks.expect(false, "completed scheme-specific suggestion should parse as an address")
             continue
         }
         Checks.expect(
-            sameRouteIgnoringFragment(completed, candidate.url),
+            sameRouteIgnoringFragment(completed, candidateURL),
             "completing a scheme-specific suggestion should resolve to its canonical origin"
         )
     }
@@ -301,19 +301,19 @@ private func testLegacyCreditsMoveToTheOriginTheirPagesUsed() {
     do { try JSONEncoder().encode(legacy).write(to: Store.file("history.json")) } catch { fatalError("\(error)") }
     let history = History()
 
-    let site = history.suggestions(for: "site.example", limit: 50).filter { $0.url.path() == "/" }
-    Checks.expect(site.count == 1 && site.first?.url.host() == "www.site.example.test", "a legacy credit should move to the www its pages were on")
+    let site = history.suggestions(for: "site.example", limit: 50).filter { $0.url?.path() == "/" }
+    Checks.expect(site.count == 1 && site.first?.url?.host() == "www.site.example.test", "a legacy credit should move to the www its pages were on")
     history.record(url("https://www.site.example.test/c"), title: "C")
-    let after = history.suggestions(for: "site.example", limit: 50).filter { $0.url.path() == "/" }
+    let after = history.suggestions(for: "site.example", limit: 50).filter { $0.url?.path() == "/" }
     Checks.expect(after.count == 1 && after.first.map { history.completion(for: "site.ex", among: [$0]) } == "ample.test",
                   "new visits should credit the same front door, which still completes without its www")
 
-    let local = history.suggestions(for: "localhost", limit: 50).filter { $0.url.path() == "/" }
-    Checks.expect(local.count == 1 && local.first?.url.absoluteString == "http://localhost:3000/", "a legacy credit should move to the scheme and port its pages used")
-    let bare = history.suggestions(for: "bare.example", limit: 50).filter { $0.url.path() == "/" }
-    Checks.expect(bare.count == 1 && bare.first?.url.host() == "bare.example.test", "a legacy credit on its pages' own origin should stay")
-    let titled = history.suggestions(for: "titled.example", limit: 50).filter { $0.url.path() == "/" }
-    Checks.expect(titled.count == 1 && titled.first?.url.host() == "titled.example.test", "a titled front door should never move")
+    let local = history.suggestions(for: "localhost", limit: 50).filter { $0.url?.path() == "/" }
+    Checks.expect(local.count == 1 && local.first?.url?.absoluteString == "http://localhost:3000/", "a legacy credit should move to the scheme and port its pages used")
+    let bare = history.suggestions(for: "bare.example", limit: 50).filter { $0.url?.path() == "/" }
+    Checks.expect(bare.count == 1 && bare.first?.url?.host() == "bare.example.test", "a legacy credit on its pages' own origin should stay")
+    let titled = history.suggestions(for: "titled.example", limit: 50).filter { $0.url?.path() == "/" }
+    Checks.expect(titled.count == 1 && titled.first?.url?.host() == "titled.example.test", "a titled front door should never move")
 }
 
 @MainActor
@@ -324,7 +324,7 @@ private func testCompletionFinishesWWWSitesWithoutTheirWWW() {
     let options = history.suggestions(for: "apple-t", limit: 3)
     Checks.expect(history.completion(for: "apple-t", among: options) == "est.example", "a www site should complete from its name, as before")
     Checks.expect(history.completion(for: "www.apple-t", among: options) == "est.example", "typing the www should still complete")
-    let page = options.filter { $0.url.path() == "/iPhone" }
+    let page = options.filter { $0.url?.path() == "/iPhone" }
     Checks.expect(history.completion(for: "apple-test.example/iP", among: page) == "hone", "a www page should complete without its www")
     Checks.expect(history.completion(for: "apple-test.example/ip", among: page) == nil, "completion without the www must still keep the path's case")
     history.record(url("http://www.plain-test.example/"), title: "Plain")

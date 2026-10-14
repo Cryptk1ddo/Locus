@@ -269,12 +269,11 @@ final class Links: NSObject, NSApplicationDelegate {
     /// Mail, that already knows what build this is. The person still reads
     /// it and presses send themselves — nothing here sends anything.
     static func writeFeedback() {
-        var text = URLComponents()
-        text.scheme = "mailto"
-        text.path = "hello@officecommun.com"
+        var text = URLComponents(url: URL(string: "https://github.com/\(ReleaseChannel.repository)/issues/new")!, resolvingAgainstBaseURL: false)!
         text.queryItems = [
-            URLQueryItem(name: "subject", value: "Search feedback — \(Updater.version) (\(Updater.build))"),
-            URLQueryItem(name: "body", value: "\n\n—\nSearch \(Updater.version), build \(Updater.build), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"),
+            URLQueryItem(name: "template", value: "bug_report.yml"),
+            URLQueryItem(name: "version", value: "\(Updater.version) (build \(Updater.build))"),
+            URLQueryItem(name: "macos", value: ProcessInfo.processInfo.operatingSystemVersionString),
         ]
         guard let url = text.url else { return }
         NSWorkspace.shared.open(url)

@@ -39,14 +39,7 @@ final class Updater: ObservableObject {
         if overridden, let set = ProcessInfo.processInfo.environment["SEARCH_FEED"], let url = URL(string: set) {
             return url
         }
-        // An Intel Mac has a download of its own from 1.0.5 (build.sh,
-        // SEARCH_ARCH=x86_64) and a feed beside it naming only Intel builds,
-        // so neither kind of Mac is ever offered the other's.
-        #if arch(x86_64)
-        return URL(string: "https://officecommun.com/search/intel/appcast.json")!
-        #else
-        return URL(string: "https://officecommun.com/search/appcast.json")!
-        #endif
+        return ReleaseChannel.feed
     }()
 
     private static var overridden: Bool {
@@ -66,6 +59,8 @@ final class Updater: ObservableObject {
         var dmgSha256: String? = nil
         let notes: String?
         let minimumSystemVersion: String?
+        /// Unsigned development manifests can announce releases but never install code.
+        var authenticated = true
 
         /// A release that wants a newer macOS than this one is not newer for
         /// this Mac, and is not offered.
@@ -93,7 +88,7 @@ final class Updater: ObservableObject {
         /// instead — the same as the first time.
         case offered(Release)
         /// Found, and waiting to be asked for: installing on its own is
-        /// switched off in Settings; Install Update is in the Search menu.
+        /// switched off in Settings; Install Update is in the Locus menu.
         case waiting(Release)
     }
 
@@ -102,6 +97,7 @@ final class Updater: ObservableObject {
     @Published private(set) var checking = false
     /// When the file was last read, for the line in Settings.
     @Published private(set) var lastChecked: Date?
+    @Published private(set) var checkFailed = false
 
     /// What this app is: the version people read, and the build that
     /// decides whether another is newer.
@@ -159,10 +155,10 @@ final class Updater: ObservableObject {
     func checkByHand() {
         switch stage {
         case .ready(let next):
-            say?("Search \(next.version) is ready — relaunch to use it")
+            say?("Locus \(next.version) is ready — relaunch to use it")
             return
         case .fetching(let next):
-            say?("Search \(next.version) is downloading…")
+            say?("Locus \(next.version) is downloading…")
             return
         default: break
         }
@@ -170,7 +166,7 @@ final class Updater: ObservableObject {
         say?("Checking for updates…")
         check { [weak self] found in
             guard let self else { return }
-            if found == nil { self.say?("Search is up to date"); return }
+            if found == nil { self.say?(self.checkFailed ? "Couldn’t check for Locus updates — try again later" : "Locus is up to date"); return }
             // The waiting branch or `take` announces the next state afterward.
         }
     }
@@ -185,6 +181,7 @@ final class Updater: ObservableObject {
             let found = await Updater.fetch()
             guard let self else { return }
             checking = false
+            checkFailed = found == nil
             lastChecked = Date()
             Store.settings.set(Date(), forKey: lastKey)
             guard let found, found.build > Updater.build, found.runsHere else {
@@ -195,13 +192,18 @@ final class Updater: ObservableObject {
                 return
             }
             done(found)
+            guard found.authenticated else {
+                stage = .offered(found)
+                say?("Locus \(found.version) is available on GitHub")
+                return
+            }
             guard !installsOnItsOwn else { take(found); return }
             switch stage {
             case .fetching, .ready: break
             case .waiting(let known) where known == found: break
             case .none, .offered, .waiting:
                 stage = .waiting(found)
-                say?("Search \(found.version) is out — choose Install Update in the Search menu")
+                say?("Locus \(found.version) is out — choose Install Update in the Locus menu")
             }
         }
     }
@@ -215,8 +217,12 @@ final class Updater: ObservableObject {
 
     func openDisk() {
         guard case .offered(let release) = stage, !fetchingDisk else { return }
+        guard release.authenticated else {
+            NSWorkspace.shared.open(ReleaseChannel.releases)
+            return
+        }
         fetchingDisk = true
-        say?("Downloading Search \(release.version)…")
+        say?("Downloading Locus \(release.version)…")
         Task.detached(priority: .utility) {
             let result: Result<URL, Error>
             do { result = .success(try await Swap.disk(release)) } catch { result = .failure(error) }
@@ -228,7 +234,7 @@ final class Updater: ObservableObject {
                     if Store.testing { Updater.diskVerdict = "verified" } else { NSWorkspace.shared.open(dmg) }
                 case .failure(let error):
                     Updater.diskVerdict = "refused: \(error)"
-                    say?("That download didn't check out — get Search from officecommun.com/search")
+                    say?("That download didn't check out — get Locus from GitHub")
                 }
             }
         }
@@ -246,12 +252,13 @@ final class Updater: ObservableObject {
     /// the bundle this process is running from out from under it, so the
     /// next launch takes the next one.
     private func take(_ release: Release) {
+        guard release.authenticated else { return }
         switch stage {
         case .fetching, .ready: return
         case .none, .offered, .waiting: break
         }
         stage = .fetching(release)
-        say?("Search \(release.version) is downloading…")
+        say?("Locus \(release.version) is downloading…")
         Task.detached(priority: .utility) {
             let worked: Bool
             do {
@@ -268,8 +275,8 @@ final class Updater: ObservableObject {
         guard case .fetching(let fetching) = stage, fetching == release else { return }
         stage = worked ? .ready(release) : .offered(release)
         say?(worked
-            ? "Search \(release.version) is ready — it's there the next time you open it"
-            : "Search \(release.version) is out — choose Download Update in the Search menu")
+            ? "Locus \(release.version) is ready — it's there the next time you open it"
+            : "Locus \(release.version) is out — choose Download Update in the Locus menu")
     }
 
     /// Quit, and come back as the new one. A shell waits for this process
@@ -301,17 +308,29 @@ final class Updater: ObservableObject {
     }
 
     private static func fetch() async -> Release? {
-        // The feed as Office Commun signed it: appcast.json.zip, next to the
-        // plain one older builds read, holding the same file with its code
-        // signature (build.sh). Only what comes out of it, checked, is read:
-        // a feed a server or a hijacked answer made up is no feed at all.
-        guard let packed = await get(feed.appendingPathExtension("zip"), limit: 1 << 20),
-              let data = await Task.detached(priority: .utility, operation: { Updater.opened(packed) }).value,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let version = json["version"] as? String,
-              let build = (json["build"] as? Int) ?? Int(json["build"] as? String ?? ""),
-              let archive = link(json["url"]),
-              let dmg = link(json["dmg"])
+        // Signed installations never fall back to an unsigned manifest.
+        // Until signing is configured, GitHub can only offer a manual download.
+        let authenticated = !team.isEmpty || overridden
+        let data: Data?
+        if authenticated {
+            guard let packed = await get(feed.appendingPathExtension("zip"), limit: 1 << 20) else { return nil }
+            data = await Task.detached(priority: .utility, operation: { Updater.opened(packed) }).value
+        } else {
+            data = await get(feed, limit: 1 << 20)
+        }
+        guard let data else { return nil }
+        return parse(data, authenticated: authenticated)
+    }
+
+    static func parse(_ data: Data, authenticated: Bool) -> Release? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let version = json["version"] as? String, !version.isEmpty,
+              let build = json["build"] as? Int, build > 0,
+              let archive = link(json["url"]), let dmg = link(json["dmg"]),
+              overridden || (archive.lastPathComponent == "Locus-\(ReleaseChannel.architecture).zip"
+                  && dmg.lastPathComponent == "Locus-\(ReleaseChannel.architecture).dmg"),
+              ReleaseChannel.checksum(json["sha256"]) != nil,
+              ReleaseChannel.checksum(json["dmgSha256"]) != nil
         else { return nil }
         let sha = (json["sha256"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let dmgSha = (json["dmgSha256"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -325,20 +344,8 @@ final class Updater: ObservableObject {
             notes: notes.flatMap { $0.isEmpty ? nil : $0 },
             minimumSystemVersion: json["minimumSystemVersion"] as? String
         )
+        release.authenticated = authenticated
         release.dmgSha256 = dmgSha.flatMap { $0.isEmpty ? nil : $0 }
-        // The AI add-on's engine for this Mac, when the feed offers one: as
-        // signed as the release itself (see AIEngine).
-        if let engine = (json["ai"] as? [String: Any])?["engine"] as? [String: Any],
-           let version = (engine["version"] as? Int) ?? Int(engine["version"] as? String ?? ""),
-           let url = link(engine["url"]), url.scheme?.lowercased() == "https",
-           let sha = (engine["sha256"] as? String)?.lowercased(), sha.count == 64,
-           let size = (engine["size"] as? NSNumber)?.int64Value, size > 0, size < 64 << 20 {
-            let offer = AIEngine.Offer(version: version, url: url, sha256: sha, size: size)
-            await MainActor.run {
-                AIEngine.shared.offered = offer
-                AIEngine.shared.refreshState()
-            }
-        }
         return release
     }
 
@@ -354,8 +361,8 @@ final class Updater: ObservableObject {
     }
 
     /// The team that signs Search's releases, and with them its feed.
-    nonisolated static let team = "7BYKA895MC"
-    nonisolated static let feedIdentifier = "com.officecommun.search.appcast"
+    nonisolated static var team: String { Bundle.main.infoDictionary?["LocusUpdateTeam"] as? String ?? "" }
+    nonisolated static let feedIdentifier = "com.cryptk1ddo.locus.appcast"
 
     /// The feed inside `packed`, if it is Office Commun's: appcast.json with
     /// a code signature (codesign keeps it in the file's extended attributes,
@@ -393,6 +400,7 @@ final class Updater: ObservableObject {
     private static func link(_ value: Any?) -> URL? {
         guard let url = (value as? String).flatMap(URL.init(string:)) else { return nil }
         guard url.scheme == "https" || (overridden && url.scheme == "http") else { return nil }
+        guard overridden else { return ReleaseChannel.asset(value) }
         guard url.host == feed.host else { return nil }
         return url
     }
@@ -529,7 +537,7 @@ private enum Swap {
         guard let expected = release.dmgSha256 else { throw Refused.hash }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("search-disk-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let dmg = folder.appendingPathComponent("Search \(release.version).dmg")
+        let dmg = folder.appendingPathComponent("Locus \(release.version).dmg")
         try await download(release.dmg, to: dmg)
         guard try digest(of: dmg) == expected else { throw Refused.hash }
         var code: SecStaticCode?

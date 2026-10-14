@@ -33,11 +33,20 @@ final class Float {
     var onSkip: ((Double) -> Void)?
     /// Asked every half second while the window is up, for the line along the
     /// bottom edge.
-    var onProgress: ((@escaping (Double, Bool) -> Void) -> Void)?
+    var onProgress: ((@escaping (FloatMediaState) -> Void) -> Void)?
+    var onSeek: ((Double) -> Void)?
+    var onMute: (() -> Void)?
+    var onRate: ((Double) -> Void)?
 
     private var ticker: Timer?
 
     var showing: Bool { panel != nil }
+    static func owns(_ window: NSWindow?) -> Bool { window is Panel }
+    @discardableResult static func take(_ event: NSEvent) -> Bool {
+        guard let controls = event.window?.contentView?.subviews.compactMap({ $0 as? Controls }).first else { return false }
+        return controls.takeKey(event)
+    }
+
 
     /// Where a test run's bench opens the window instead: off every screen,
     /// at the size it would have had, and not remembered (see `film float`
@@ -161,22 +170,29 @@ final class Float {
         controls.autoresizingMask = [.width, .height]
         controls.onClose = { [weak self] in self?.onClose?() }
         controls.onReturn = { [weak self] in self?.onReturn?() }
-        controls.onPlayPause = { [weak self] in
-            self?.onPlayPause? { playing in
-                self?.controls?.playing = playing
+        controls.onPlayPause = { [weak self, weak controls] in
+            self?.onPlayPause? { [weak self, weak controls] playing in
+                guard let controls, self?.controls === controls else { return }
+                controls.playing = playing
             }
         }
         controls.onSkip = { [weak self] seconds in self?.onSkip?(seconds) }
+        controls.onSeek = { [weak self] fraction in self?.onSeek?(fraction) }
+        controls.onMute = { [weak self] in self?.onMute?() }
+        controls.onRate = { [weak self] rate in self?.onRate?(rate) }
         ground.addSubview(controls)
         self.controls = controls
 
         panel.contentView = ground
         panel.orderFrontRegardless()
         self.panel = panel
+        onProgress? { [weak self, weak controls] state in
+            guard let self, let controls, self.controls === controls else { return }; self.applyAspect(state.aspect); controls.media = state
+        }
 
-        ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self, weak controls] _ in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, let controls else { return }
 
                 // A window that no longer holds the page has nothing to show
                 // and no reason to exist. Something else took the page back —
@@ -188,12 +204,33 @@ final class Float {
                     return
                 }
 
-                self.onProgress? { through, playing in
-                    self.controls?.progress = through
-                    self.controls?.playing = playing
+                self.onProgress? { [weak controls] state in
+                    guard let controls, self.controls === controls else { return }
+                    self.applyAspect(state.aspect); controls.media = state
                 }
             }
         }
+    }
+
+    /// Keep controls usable and fit the media without a window spilling off screen.
+    nonisolated static func mediaFrame(_ frame: CGRect, ratio: Double, in area: CGRect) -> CGRect? {
+        guard ratio.isFinite, (0.5...3).contains(ratio), frame.width.isFinite, frame.width > 0, area.width > 0, area.height > 0 else { return nil }
+        let minimum = max(260, 146 * ratio), maximum = min(area.width * 0.85, area.height * 0.85 * ratio)
+        guard maximum >= minimum else { return nil }
+        let width = min(max(frame.width, minimum), maximum), height = width / ratio
+        return CGRect(x: min(max(frame.maxX - width, area.minX), area.maxX - width), y: min(max(frame.maxY - height, area.minY), area.maxY - height), width: width, height: height)
+    }
+    private func applyAspect(_ ratio: Double?) {
+        guard let ratio, let panel, !panel.inLiveResize, controls?.dockedFrom == nil,
+              max(abs(panel.aspectRatio.width / max(1, panel.aspectRatio.height) - ratio),
+                  abs(panel.frame.width / max(1, panel.frame.height) - ratio)) > 0.01 else { return }
+        let screen = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let area = Float.benchAway == nil ? screen : CGRect(x: panel.frame.maxX - screen.width, y: panel.frame.maxY - screen.height, width: screen.width, height: screen.height)
+        guard let frame = Self.mediaFrame(panel.frame, ratio: ratio, in: area) else { return }
+        let minimum = max(260, 146 * ratio)
+        panel.minSize = NSSize(width: minimum, height: minimum / ratio)
+        panel.aspectRatio = NSSize(width: ratio, height: 1)
+        panel.setFrame(frame, display: false)
     }
 
     /// The window's last place and size, kept across closing it and quitting,
@@ -252,23 +289,44 @@ final class Float {
         var onReturn: (() -> Void)?
         var onPlayPause: (() -> Void)?
         var onSkip: ((Double) -> Void)?
+        var onSeek: ((Double) -> Void)?
+        var onMute: (() -> Void)?
+        var onRate: ((Double) -> Void)?
 
         var playing = true {
-            didSet { pause.image = glyph(playing ? "pause.fill" : "play.fill", 17) }
+            didSet {
+                pause.image = glyph(playing ? "pause.fill" : media.ended ? "arrow.counterclockwise" : "play.fill", 17)
+                pause.setAccessibilityLabel(playing ? "Pause video" : media.ended ? "Replay video" : "Play video")
+            }
         }
 
-        /// Nought to one. Drawn as a hairline along the bottom edge.
-        var progress: Double = 0 {
-            didSet { line.through = progress }
+        var media = FloatMediaState() {
+            didSet {
+                playing = media.playing
+                pause.isEnabled = media.available && !media.failed
+                mute.isEnabled = media.available && !media.failed
+                mute.image = glyph(media.muted ? "speaker.slash.fill" : "speaker.wave.2.fill", 12)
+                mute.setAccessibilityLabel(media.muted ? "Unmute video" : "Mute video")
+                timeline.isEnabled = media.seekable
+                if !timeline.trackingSeek { timeline.doubleValue = media.progress }
+                timeline.setAccessibilityValueDescription(media.timeLabel)
+                rewind.isEnabled = media.canSkip; forward.isEnabled = media.canSkip
+                time.stringValue = media.timeLabel
+                time.alphaValue = near || media.needsAttention ? 1 : 0
+                CATransaction.begin(); CATransaction.setDisableActions(true)
+                scrim.opacity = near || media.needsAttention ? 1 : 0; CATransaction.commit()
+            }
         }
 
-        private let close = NSButton()
-        private let back = NSButton()
-        private let pause = NSButton()
-        private let rewind = NSButton()
-        private let forward = NSButton()
+        private let close = MediaButton()
+        private let back = MediaButton()
+        private let pause = MediaButton()
+        private let rewind = MediaButton()
+        private let forward = MediaButton()
         private let scrim = CAGradientLayer()
-        private let line = Line()
+        private let mute = MediaButton()
+        private let timeline = MediaSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+        private let time = NSTextField(labelWithString: "Video unavailable")
         private var near = false
 
         override init(frame: NSRect) {
@@ -293,15 +351,23 @@ final class Float {
             dress(pause, "pause.fill", 17, round: 25, action: #selector(pressedPause))
             dress(forward, "goforward.15", 15, round: 19, action: #selector(pressedForward))
 
-            line.alphaValue = 0
-            addSubview(line)
+            dress(mute, "speaker.wave.2.fill", 12, round: 15, action: #selector(pressedMute))
+            for (button, title) in [(close, "Close picture in picture"), (back, "Return to video tab"), (pause, "Pause video"), (rewind, "Back 15 seconds"), (forward, "Forward 15 seconds")] {
+                button.toolTip = title; button.setAccessibilityLabel(title)
+            }
+            mute.toolTip = "Mute or unmute · M"
+            timeline.target = self; timeline.action = #selector(sought); timeline.isContinuous = true; timeline.isEnabled = false
+            timeline.setAccessibilityLabel("Video position"); timeline.identifier = NSUserInterfaceItemIdentifier("locus.pip.timeline")
+            time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular); time.textColor = .white; time.alignment = .center
+            [timeline, time].forEach { $0.alphaValue = 0; addSubview($0) }
             buttons.forEach { $0.alphaValue = 0 }
+            media = FloatMediaState()
         }
 
         @available(*, unavailable)
         required init?(coder: NSCoder) { fatalError() }
 
-        private var buttons: [NSButton] { [close, back, rewind, pause, forward] }
+        private var buttons: [NSButton] { [close, back, rewind, pause, forward, mute] }
 
         private func dress(
             _ button: NSButton,
@@ -344,7 +410,9 @@ final class Float {
             rewind.frame = NSRect(x: bounds.midX - 25 - 54, y: middle + 6, width: 38, height: 38)
             forward.frame = NSRect(x: bounds.midX + 25 + 16, y: middle + 6, width: 38, height: 38)
 
-            line.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 3)
+            mute.frame = NSRect(x: bounds.width - 80, y: bounds.height - 44, width: 30, height: 30)
+            timeline.frame = NSRect(x: 18, y: 12, width: max(1, bounds.width - 36), height: 18)
+            time.frame = NSRect(x: 18, y: 34, width: max(1, bounds.width - 36), height: 16)
         }
 
         override func updateTrackingAreas() {
@@ -367,11 +435,12 @@ final class Float {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.16
                 buttons.forEach { $0.animator().alphaValue = value }
-                line.animator().alphaValue = value
+                timeline.animator().alphaValue = value
+                time.animator().alphaValue = media.needsAttention ? 1 : value
             }
             CATransaction.begin()
             CATransaction.setAnimationDuration(0.16)
-            scrim.opacity = Swift.Float(value)
+            scrim.opacity = media.needsAttention ? 1 : Swift.Float(value)
             CATransaction.commit()
         }
 
@@ -385,6 +454,7 @@ final class Float {
         override func hitTest(_ point: NSPoint) -> NSView? {
             let inside = convert(point, from: superview)
             if near {
+                if timeline.isEnabled && timeline.frame.contains(inside) { return timeline.hitTest(point) ?? timeline }
                 for button in buttons where button.frame.contains(inside) {
                     return button
                 }
@@ -411,6 +481,7 @@ final class Float {
 
         override func mouseDown(with event: NSEvent) {
             guard let window else { return }
+            window.makeFirstResponder(self)
             // A click on the sliver of a docked window brings it back.
             if docked != nil {
                 undock()
@@ -743,10 +814,11 @@ final class Float {
 
         private func resize(to width: CGFloat, from was: NSRect, around anchor: NSPoint? = nil) {
             guard let window, was.width > 0 else { return }
-            let limit = NSScreen.main?.visibleFrame.width ?? 1600
-            // Keeps the shape: a video window that can be squashed is a video
-            // window showing bars.
-            let wide = min(max(window.minSize.width, width), limit * 0.85)
+            let area = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+            // Apply the same height bound during pinch/drag resize as metadata
+            // fitting, so a portrait player cannot grow taller than its screen.
+            let request = CGRect(x: was.minX, y: was.minY, width: max(window.minSize.width, width), height: was.height)
+            let wide = Float.mediaFrame(request, ratio: was.width / max(1, was.height), in: area)?.width ?? window.minSize.width
             let tall = wide * was.height / was.width
 
             let spot: NSPoint
@@ -773,25 +845,63 @@ final class Float {
         @objc private func pressedRewind() { onSkip?(-15) }
         @objc private func pressedForward() { onSkip?(15) }
         @objc private func pressedPause() {
-            playing.toggle()
-            onPlayPause?()
+            if media.available && !media.failed { onPlayPause?() }
         }
 
-        /// How far through, along the bottom edge. Quiet enough to ignore.
-        final class Line: NSView {
-            var through: Double = 0 {
-                didSet { needsDisplay = true }
+        override func menu(for event: NSEvent) -> NSMenu? {
+            let menu = NSMenu(), speed = NSMenu()
+            for rate in [0.5, 0.75, 1.0, 1.25, 1.5, 2.0] {
+                let item = NSMenuItem(title: rate == 1 ? "Normal" : "\(rate)×", action: #selector(changedRate(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = rate
+                item.state = abs(media.rate - rate) < 0.001 ? .on : .off
+                item.isEnabled = media.available && !media.failed; speed.addItem(item)
             }
-
-            override func draw(_ dirty: NSRect) {
-                NSColor(white: 1, alpha: 0.22).setFill()
-                bounds.fill()
-                NSColor(white: 1, alpha: 0.85).setFill()
-                NSRect(x: 0, y: 0, width: bounds.width * through, height: bounds.height).fill()
-            }
-
-            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+            speed.autoenablesItems = false
+            let item = NSMenuItem(title: "Playback speed", action: nil, keyEquivalent: ""); item.submenu = speed; menu.addItem(item)
+            return menu
         }
+        @objc private func changedRate(_ sender: NSMenuItem) {
+            guard media.available && !media.failed, let rate = sender.representedObject as? Double else { return }; onRate?(rate)
+        }
+        @objc private func pressedMute() { if media.available && !media.failed { onMute?() } }
+        @objc private func sought() {
+            guard media.seekable else { return }
+            // Preview the requested position immediately; the next source
+            // update confirms its real position within the seekable ranges.
+            time.stringValue = FloatMediaState.clock(timeline.doubleValue * media.duration) + " / " + FloatMediaState.clock(media.duration)
+            onSeek?(timeline.doubleValue)
+        }
+        override var acceptsFirstResponder: Bool { true }
+        override func becomeFirstResponder() -> Bool { fade(to: 1); return true }
+        override func keyDown(with event: NSEvent) { if !takeKey(event) { super.keyDown(with: event) } }
+        func takeKey(_ event: NSEvent) -> Bool {
+            if event.modifierFlags.contains(.command) {
+                if event.charactersIgnoringModifiers?.lowercased() == "w" { pressedClose(); return true }; return false
+            }
+            guard event.modifierFlags.isDisjoint(with: [.control, .option]) else { return false }
+            fade(to: 1)
+            switch event.keyCode {
+            case 49: pressedPause()
+            case 123: if media.canSkip { onSkip?(-15) }
+            case 124: if media.canSkip { onSkip?(15) }
+            case 46: pressedMute()
+            case 53: pressedClose()
+            case 36: pressedReturn()
+            default: return false
+            }
+            return true
+        }
+        private final class MediaSlider: NSSlider {
+            var trackingSeek = false
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+            override func mouseDown(with event: NSEvent) {
+                trackingSeek = true; defer { trackingSeek = false }; super.mouseDown(with: event)
+            }
+        }
+        private final class MediaButton: NSButton {
+            override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        }
+
     }
 }
 
@@ -878,6 +988,9 @@ enum Isolate {
       // again.
       window.__officeFloatLanding = null;
       best.setAttribute('data-office-float', '');
+      var known = new Set(videos), containers = [], parent = best.parentElement;
+      while (parent && parent !== document.body && parent !== document.documentElement) { containers.push(parent); parent = parent.parentElement; }
+
       var sheet = document.getElementById('office-float');
       if (!sheet) {
         sheet = document.createElement('style');
@@ -938,21 +1051,20 @@ enum Isolate {
       // turns pure black while still holding a perfectly live page. That is the
       // black rectangle, and it is not an orphaned window at all.
       //
-      // So the mark is put back on whatever is playing now, four times a
-      // second, for as long as the page is out.
+      // Follow replacements in the original player container, including a
+      // paused or loading replacement, four times a second while floated.
       clearInterval(window.__officeFloatWatch);
       window.__officeFloatWatch = setInterval(function () {
         if (document.querySelector('[data-office-float]')) return;
-        var again = null, most = 0;
-        var all = document.querySelectorAll('video');
+        var again = null, most = -1;
+        var container = containers.find(function (node) { return node.isConnected; });
+        var all = (container || document).querySelectorAll('video');
         for (var j = 0; j < all.length; j++) {
           var one = all[j];
-          if (one.paused || one.ended || one.readyState < 2) continue;
+          // Elsewhere on the page, an existing background video is not our player.
+          if (!container && known.has(one) && one !== best) continue;
           var shape = one.getBoundingClientRect();
-          if (shape.width * shape.height >= most) {
-            most = shape.width * shape.height;
-            again = one;
-          }
+          if (shape.width * shape.height > most) { most = shape.width * shape.height; again = one; }
         }
         if (again) again.setAttribute('data-office-float', '');
       }, 250);
@@ -963,23 +1075,66 @@ enum Isolate {
 
     /// Stop or start it, and say which it is now.
     /// Step over the bit you missed, or back to it.
-    static func skip(_ seconds: Double) -> String {
+    private static func seekCommand(_ expression: String, finite: Bool = true) -> String {
         """
         (function () {
-          var video = document.querySelector('[data-office-float]')
-            || document.querySelector('video');
-          if (!video) return false;
-          video.currentTime = Math.max(0, video.currentTime + (\(seconds)));
-          return true;
+          var video = document.querySelector('[data-office-float]') || (!document.documentElement.classList.contains('office-floating') ? document.querySelector('video') : null);
+          if (!video || !video.seekable.length) return false;
+          if (\(finite ? "true" : "false") && (!isFinite(video.duration) || video.duration <= 0)) return false;
+          var wanted = Math.max(0, \(expression)), nearest = null, distance = Infinity;
+          if (isFinite(video.duration) && video.duration > 0) wanted = Math.min(video.duration, wanted);
+          for (var i = 0; i < video.seekable.length; i++) {
+            var candidate = Math.max(video.seekable.start(i), Math.min(video.seekable.end(i), wanted));
+            if (Math.abs(candidate - wanted) < distance) { nearest = candidate; distance = Math.abs(candidate - wanted); }
+          }
+          if (nearest === null) return false;
+          try { video.currentTime = nearest; return true; } catch (_) { return false; }
         })();
         """
     }
+    static func skip(_ seconds: Double) -> String {
+        guard seconds.isFinite else { return "false" }
+        return seekCommand("video.currentTime + (\(seconds))", finite: false)
+    }
+    static func seek(_ fraction: Double) -> String {
+        guard fraction.isFinite else { return "false" }
+        return seekCommand("video.duration * (\(min(1, max(0, fraction))))")
+    }
+    static func rate(_ value: Double) -> String {
+        guard [0.5, 0.75, 1.0, 1.25, 1.5, 2.0].contains(value) else { return "false" }
+        return """
+        (function () { var video = document.querySelector('[data-office-float]');
+          if (!video) return false;
+          try { video.playbackRate = \(value); return video.playbackRate === \(value); } catch (_) { return false; }
+        })();
+        """
+    }
+
+    static let mediaState = """
+    (function () {
+      var video = document.querySelector('[data-office-float]') || (!document.documentElement.classList.contains('office-floating') ? document.querySelector('video') : null);
+      if (!video) return null;
+      var finite = isFinite(video.duration) && video.duration > 0;
+      return { available: true, loading: video.readyState < 2 && !video.error,
+        buffering: !video.paused && !video.ended && video.readyState < 3,
+        ended: video.ended, failed: !!video.error, live: video.duration === Infinity, rate: video.playbackRate, width: video.videoWidth, height: video.videoHeight,
+        current: isFinite(video.currentTime) ? video.currentTime : 0,
+        duration: finite ? video.duration : 0, playing: !video.paused && !video.ended,
+        muted: video.muted || video.volume === 0, seekable: finite && video.seekable.length > 0, canSkip: video.seekable.length > 0 };
+    })();
+    """
+    static let mute = """
+    (function () { var video = document.querySelector('[data-office-float]') || (!document.documentElement.classList.contains('office-floating') ? document.querySelector('video') : null);
+      if (!video) return false; video.muted = !(video.muted || video.volume === 0);
+      if (!video.muted && video.volume === 0) video.volume = 1;
+      return video.muted; })();
+    """
 
     /// How far through, and whether it is running.
     static let where_ = """
     (function () {
       var video = document.querySelector('[data-office-float]')
-        || document.querySelector('video');
+        || (!document.documentElement.classList.contains('office-floating') ? document.querySelector('video') : null);
       if (!video || !video.duration || !isFinite(video.duration)) return [0, true];
       return [video.currentTime / video.duration, !video.paused];
     })();
@@ -988,9 +1143,12 @@ enum Isolate {
     static let toggle = """
     (function () {
       var video = document.querySelector('[data-office-float]')
-        || document.querySelector('video');
-      if (!video) return true;
-      if (video.paused) { video.play(); } else { video.pause(); }
+        || (!document.documentElement.classList.contains('office-floating') ? document.querySelector('video') : null);
+      if (!video) return false;
+      if (video.paused || video.ended) {
+        if (video.ended) { try { video.currentTime = video.seekable.length ? video.seekable.start(0) : 0; } catch (_) {} }
+        video.play().catch(function () {});
+      } else { video.pause(); }
       return !video.paused;
     })();
     """
@@ -1007,7 +1165,7 @@ enum Isolate {
       // leaves you with two.
       try {
         var out = document.querySelector('video[data-office-float]')
-          || document.querySelector('video');
+          || (!document.documentElement.classList.contains('office-floating') ? document.querySelector('video') : null);
         if (out) {
           if (out.webkitPresentationMode === 'picture-in-picture') {
             out.webkitSetPresentationMode('inline');

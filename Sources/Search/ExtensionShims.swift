@@ -3648,7 +3648,9 @@ enum ExtensionShims {
             let named = first as? String
             let options = (named == nil ? first : (args.count > 1 ? args[1] : nil)) as? [String: Any] ?? [:]
             let key = named ?? UUID().uuidString
-            let center = UNUserNotificationCenter.current()
+            guard let center = SystemNotifications.center() else {
+                throw Unsupported(what: "System notifications require a bundled app outside a test run")
+            }
             _ = try? await center.requestAuthorization(options: [.alert, .sound])
             let content = UNMutableNotificationContent()
             content.title = options["title"] as? String ?? (context.webExtension.displayName ?? "")
@@ -3658,13 +3660,13 @@ enum ExtensionShims {
             return key
         case "notifications.clear":
             if let key = first as? String {
-                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["\(id).\(key)"])
+                SystemNotifications.center()?.removeDeliveredNotifications(withIdentifiers: ["\(id).\(key)"])
             }
             return true
         case "notifications.getAll":
             return [String: Any]()
         case "notifications.getPermissionLevel":
-            return "granted"
+            return SystemNotifications.center() == nil ? "denied" : "granted"
         case "notifications.update":
             return false
 

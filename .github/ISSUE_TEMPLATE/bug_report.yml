@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible problem in Locus
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Locus version and build
+      placeholder: 0.1.0 (from Settings → About)
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac architecture
+      placeholder: macOS 26, Apple Silicon or Intel
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual results. Remove private URLs, account details and tokens.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or crash log
+      description: Optional. Review logs for private data before sharing.

@@ -166,7 +166,7 @@ final class PaneStage: NSView {
     /// The page a tab puts on the stage: none while it is blank, asleep or
     /// floating, as Page decides it (see Stage.swift).
     private func page(_ tab: Tab) -> NSView? {
-        tab.isBlank || tab.asleep || tab.floating ? nil : tab.web
+        tab.isWall || tab.isBlank || tab.asleep || tab.floating ? nil : tab.web
     }
 
     private func refill() {

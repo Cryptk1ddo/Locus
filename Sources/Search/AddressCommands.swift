@@ -11,6 +11,8 @@ import Foundation
 
 @MainActor
 enum AddressCommand: CaseIterable, Equatable {
+    case captureUI
+    case openWall
     case settings
     case newTab
     case newPrivateTab
@@ -24,6 +26,8 @@ enum AddressCommand: CaseIterable, Equatable {
     /// What you'd type to reach it. The first is what the list shows.
     var aliases: [String] {
         switch self {
+        case .captureUI: return ["capture ui"]
+        case .openWall: return ["open wall"]
         case .settings: return ["settings", "preferences"]
         case .newTab: return ["new tab"]
         case .newPrivateTab: return ["new private tab", "private tab"]
@@ -42,12 +46,16 @@ enum AddressCommand: CaseIterable, Equatable {
     func available(in browser: Browser) -> Bool {
         switch self {
         case .newSpace: return browser.prefs.usesSpaces
+        case .captureUI: return browser.canCaptureUI
+        case .openWall: return browser.canOpenWall
         default: return true
         }
     }
 
     func run(on browser: Browser) {
         switch self {
+        case .captureUI: browser.startUICapture()
+        case .openWall: browser.openWall()
         case .settings: browser.tuning = true
         case .newTab: browser.newTab()
         case .newPrivateTab: browser.newShyTab()

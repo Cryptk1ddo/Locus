@@ -297,6 +297,11 @@ final class Bench {
             }
         }
 
+        // DOM automation applies only to real web tabs; native tabs remain selectable/closable.
+        if let tab = find(request, in: browser), tab.isWall,
+           !["select", "pin", "close", "sleep", "split", "group", "tospace", "towindow", "strip", "column"].contains(verb) {
+            answer(["error": "This is a native Wall tab, not a web page"]); return
+        }
         switch verb {
         case "tabs":
             // A private tab is nobody's business but yours: a test run has none
@@ -700,7 +705,8 @@ final class Bench {
             }
             // "repeat": the press a key held down sends again and again.
             let repeats = (request["mods"] as? [String] ?? []).contains("repeat")
-            for type in [NSEvent.EventType.keyDown, .keyUp] {
+            let phases: [NSEvent.EventType] = request["phase"] as? String == "down" ? [.keyDown] : request["phase"] as? String == "up" ? [.keyUp] : [.keyDown, .keyUp]
+            for type in phases {
                 guard let event = NSEvent.keyEvent(
                     with: type, location: .zero, modifierFlags: flags,
                     timestamp: ProcessInfo.processInfo.systemUptime,
@@ -968,7 +974,7 @@ final class Bench {
             func state(_ extra: [String: Any] = [:]) -> [String: Any] {
                 var out: [String: Any] = [
                     "offer": browser.siteOffer?.name ?? "", "chip": browser.siteChip?.name ?? "",
-                    "typed": browser.typed, "offers": browser.offers.map { [$0.key, $0.url.absoluteString] },
+                    "typed": browser.typed, "offers": browser.offers.map { [$0.key, $0.url?.absoluteString ?? ""] },
                     "editing": browser.editing, "learned": SiteSearch.learned.map { [$0.name, $0.host, $0.template] },
                     "address": browser.active?.address?.absoluteString ?? "",
                 ]
@@ -1364,7 +1370,8 @@ final class Bench {
                     "addressed": assistant.addressed,
                     "place": assistant.place,
                     "turns": assistant.turns.map { ["question": $0.question ?? "", "answer": $0.answer, "done": $0.done,
-                                                     "failed": $0.failed ?? "", "strays": $0.strays] as [String: Any] },
+                                                     "failed": $0.failed ?? "", "strays": $0.strays, "checked": $0.checked,
+                                                     "canSave": browser.canSaveAIAnswer($0, assistant: assistant)] as [String: Any] },
                 ])
             case "picture":
                 // The panel as it stands, and Settings › AI, drawn off screen
@@ -1734,6 +1741,45 @@ final class Bench {
                   let panel = NSApp.windows.first(where: { "\(type(of: $0))" == "Panel" && $0.isVisible }),
                   let controls = panel.contentView?.subviews.first(where: { "\(type(of: $0))" == "Controls" })
             else { answer(["error": "float needs the floating window up, off screen (film float first)"]); return }
+            if request["action"] as? String == "key", let code = request["code"] as? Int,
+               let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber, context: nil, characters: request["chars"] as? String ?? "", charactersIgnoringModifiers: request["chars"] as? String ?? "", isARepeat: false, keyCode: UInt16(clamping: code)) {
+                controls.keyDown(with: event); answer(["sent": true]); return
+            }
+            if request["action"] as? String == "seek", let fraction = request["fraction"] as? Double,
+               let slider = controls.subviews.compactMap({ $0 as? NSSlider }).first {
+                guard slider.isEnabled else { answer(["error": "Video is not seekable"]); return }
+                slider.doubleValue = min(1, max(0, fraction)); slider.sendAction(slider.action, to: slider.target)
+                answer(["sent": true]); return
+            }
+            if request["action"] as? String == "rate", let rate = request["rate"] as? Double,
+               let event = NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+               let menu = controls.menu(for: event)?.items.first?.submenu,
+               let item = menu.items.first(where: { ($0.representedObject as? Double) == rate }), item.isEnabled, let action = item.action {
+                NSApp.sendAction(action, to: item.target, from: item); answer(["sent": true]); return
+            }
+            if request["action"] as? String == "pointerExit", let event = NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil) {
+                controls.mouseExited(with: event); answer(["sent": true]); return
+            }
+            if request["action"] as? String == "controls" {
+                answer(["statusAlpha": controls.subviews.compactMap { $0 as? NSTextField }.first?.alphaValue ?? 0, "buttonAlpha": controls.subviews.compactMap { ($0 as? NSButton)?.alphaValue }, "size": [panel.frame.width, panel.frame.height], "labels": controls.subviews.compactMap { ($0 as? NSButton)?.accessibilityLabel() }, "seekable": controls.subviews.compactMap { $0 as? NSSlider }.first?.isEnabled ?? false, "canSkip": controls.subviews.compactMap { $0 as? NSButton }.first(where: { $0.accessibilityLabel() == "Back 15 seconds" })?.isEnabled ?? false, "time": controls.subviews.compactMap { $0 as? NSTextField }.first?.stringValue ?? ""]); return
+            }
+            if request["action"] as? String == "picture", let path = request["path"] as? String, let frame = panel.contentView,
+               let web = frame.subviews.compactMap({ $0 as? WKWebView }).first,
+               let overlay = controls.bitmapImageRepForCachingDisplay(in: controls.bounds) {
+                controls.cacheDisplay(in: controls.bounds, to: overlay)
+                web.takeSnapshot(with: nil) { image, error in
+                    MainActor.assumeIsolated {
+                        guard let image else { answer(["error": error?.localizedDescription ?? "Video snapshot unavailable"]); return }
+                        let result = NSImage(size: frame.bounds.size)
+                        result.lockFocus(); NSColor.black.setFill(); frame.bounds.fill()
+                        image.draw(in: frame.bounds); overlay.draw(in: frame.bounds); result.unlockFocus()
+                        do {
+                            guard let data = result.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data), let png = bitmap.representation(using: .png, properties: [:]) else { answer(["error": "PiP render failed"]); return }
+                            try png.write(to: URL(fileURLWithPath: path)); answer(["saved": path])
+                        } catch { answer(["error": error.localizedDescription]) }
+                    }
+                }; return
+            }
             let screen = NSRect(x: -30000, y: -30000, width: 1440, height: 900)
             if Float.benchScreens == nil { Float.benchScreens = [screen] }
             func state() -> [String: Any] {
@@ -2294,10 +2340,28 @@ final class Bench {
                 }
             }
 
+        case "night":
+            guard Store.testing else { answer(["error": "night only works in an isolated test profile"]); return }
+            if let look = (request["appearance"] as? String).flatMap(Look.init(rawValue:)) { browser.prefs.look = look }
+            if let enabled = request["enabled"] as? Bool { NightColors.shared.setEnabled(enabled) }
+            if request["reset"] as? Bool == true { NightColors.shared.resetSites() }
+            guard let tab = find(request, in: browser), !tab.isWall else { answer(["enabled": NightColors.shared.enabled]); return }
+            if let mode = (request["mode"] as? String).flatMap(NightColors.Mode.init(rawValue:)) {
+                NightColors.shared.setMode(mode, for: tab.pageAddress, shy: tab.shy)
+            }
+            tab.web.evaluateJavaScript("globalThis.__locusNight?.status() || {state:'not-loaded'}", in: nil, in: Web.world) { result in
+                switch result { case .success(let value): answer(["enabled": NightColors.shared.enabled, "status": Bench.plain(value)])
+                case .failure(let error): answer(["error": error.localizedDescription]) }
+            }
+
+        case "wall":
+            wallCommand(request, browser: browser, answer)
+
         case "split":
             splitCommand(request, browser: browser, answer)
 
         case "ui":
+            if Store.testing, let page = request["settingsPage"] as? String, SettingsPanel.Page(rawValue: page) != nil { Store.settings.set(page, forKey: "settings.page") }
             // Open or close the app's own panels, to reproduce what a person
             // did without a person.
             if let on = request["settings"] as? Bool { browser.tuning = on }
@@ -2455,12 +2519,17 @@ final class Bench {
             let resume = request["resume"] as? Bool == true
             let clicks = request["clicks"] as? Int ?? 1
             let direct = request["to"] as? String == "view"
+            var mouseFlags: NSEvent.ModifierFlags = []
+            for flag in request["mods"] as? [String] ?? [] {
+                switch flag { case "shift": mouseFlags.insert(.shift); case "option": mouseFlags.insert(.option); case "command": mouseFlags.insert(.command); case "control": mouseFlags.insert(.control); default: break }
+            }
+            let middle = request["button"] as? String == "middle"
             for (index, coordinates) in points.enumerated() {
-                let type: NSEvent.EventType = index == 0 && !resume ? .leftMouseDown
-                    : index == points.count - 1 && !hold ? .leftMouseUp : .leftMouseDragged
+                let type: NSEvent.EventType = index == 0 && !resume ? (middle ? .otherMouseDown : .leftMouseDown)
+                    : index == points.count - 1 && !hold ? (middle ? .otherMouseUp : .leftMouseUp) : (middle ? .otherMouseDragged : .leftMouseDragged)
                 let point = NSPoint(x: coordinates[0], y: Double(window.frame.height) - coordinates[1])
                 guard let event = NSEvent.mouseEvent(
-                    with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    with: type, location: point, modifierFlags: mouseFlags, timestamp: ProcessInfo.processInfo.systemUptime,
                     windowNumber: window.windowNumber, context: nil, eventNumber: index, clickCount: clicks,
                     pressure: type == .leftMouseUp ? 0 : 1
                 ) else { continue }
@@ -2471,13 +2540,16 @@ final class Bench {
                 // does with them.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.02 * Double(index)) {
                     guard direct else { NSApp.sendEvent(event); return }
-                    if type == .leftMouseDown {
+                    if type == .leftMouseDown || type == .otherMouseDown {
                         let root = window.contentView?.superview
                         self.pressed = root.flatMap { $0.hitTest($0.convert(point, from: nil)) }
                     }
                     switch type {
                     case .leftMouseDown: self.pressed?.mouseDown(with: event)
                     case .leftMouseDragged: self.pressed?.mouseDragged(with: event)
+                    case .otherMouseDown: self.pressed?.otherMouseDown(with: event)
+                    case .otherMouseDragged: self.pressed?.otherMouseDragged(with: event)
+                    case .otherMouseUp: self.pressed?.otherMouseUp(with: event)
                     default: self.pressed?.mouseUp(with: event)
                     }
                 }
@@ -2678,6 +2750,7 @@ final class Bench {
                     "id": Bench.short(tab),
                     "title": tab.title,
                     "url": tab.address?.absoluteString ?? "",
+                    "nativeKind": tab.isWall ? "wall" : "",
                     "blank": tab.isBlank,
                     "shy": tab.shy,
                     "bench": tab.bench,
@@ -2726,7 +2799,9 @@ final class Bench {
                 let frame = web.convert(web.bounds, to: nil)
                 return ["id": Bench.short(tab), "x": Double(frame.minX),
                         "y": Double(window.frame.height - frame.maxY),
-                        "width": Double(frame.width), "height": Double(frame.height)]
+                        "width": Double(frame.width), "height": Double(frame.height),
+                        "alpha": Double(web.alphaValue), "hidden": web.isHiddenOrHasHiddenAncestor,
+                        "unpainted": web.unpainted]
             },
             "spaceID": browser.spaceID.uuidString,
             "spaceIDs": browser.spaces.map { $0.id.uuidString },
@@ -2967,6 +3042,9 @@ final class Bench {
     /// panel, one made by a path nobody thought of: taken off at once and
     /// named in every answer.
     static func watchScreens() {
+        // Explicit desktop QA keeps Store's isolated profile but allows native
+        // mouse/drag interactions. Default automated probes remain offscreen.
+        guard ProcessInfo.processInfo.environment["SEARCH_DESKTOP_QA"] != "1" else { return }
         guard watching.isEmpty else { return }
         // The app itself shown or brought forward by anything but `pages on`
         // (which never activates it): hidden again at once.

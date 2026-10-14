@@ -61,19 +61,19 @@ final class SiteNotifications: NSObject {
         let setter = NSSelectorFromString("set_delegate:")
         guard store.responds(to: setter) else { return }
         store.perform(setter, with: self)
-        if !Store.testing, UNUserNotificationCenter.current().delegate == nil {
-            UNUserNotificationCenter.current().delegate = self
+        if let center = SystemNotifications.center(), center.delegate == nil {
+            center.delegate = self
         }
     }
 
     /// The first site allowed: macOS asks, once, whether Search may notify.
     func authorize() {
-        guard !Store.testing, !authorized else { return }
+        guard !authorized, let center = SystemNotifications.center() else { return }
         authorized = true
-        UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         let site = UNNotificationCategory(identifier: "site", actions: [], intentIdentifiers: [], options: [.customDismissAction])
-        UNUserNotificationCenter.current().setNotificationCategories([site])
+        center.setNotificationCategories([site])
     }
 
     private var on: Bool { Shared.prefs.siteNotifications }
@@ -108,8 +108,8 @@ final class SiteNotifications: NSObject {
     @objc(websiteDataStore:getDisplayedNotificationsForWorkerOrigin:completionHandler:)
     nonisolated func displayed(_ store: WKWebsiteDataStore, origin: WKSecurityOrigin, completionHandler: @escaping ([NSDictionary]) -> Void) {
         let site = MainActor.assumeIsolated { Store.testing ? nil : Browser.origin(origin.protocol, origin.host, origin.port) }
-        guard let site else { return completionHandler([]) }
-        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+        guard let site, let center = SystemNotifications.center() else { return completionHandler([]) }
+        center.getDeliveredNotifications { delivered in
             let found = delivered.compactMap { note -> NSDictionary? in
                 let info = note.request.content.userInfo
                 guard info["search.kind"] as? String == "worker", info["search.origin"] as? String == site else { return nil }
@@ -143,6 +143,7 @@ final class SiteNotifications: NSObject {
             recorded.append(["title": title, "body": body, "origin": origin, "tag": tag, "kind": info["search.kind"] as? String ?? ""])
             return
         }
+        guard let center = SystemNotifications.center() else { return }
         let content = UNMutableNotificationContent()
         var info = info
         info["search.key"] = id
@@ -161,7 +162,7 @@ final class SiteNotifications: NSObject {
         }
         // A tag names a notification its site means to replace.
         let identifier = tag.isEmpty ? id : "tag|\(origin)|\(tag)"
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+        center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
 
     /// The site's icon as a file of its own each time: macOS moves an
@@ -442,11 +443,11 @@ enum PageNotifications {
     }
 
     private static func forget(_ id: UInt64) {
-        guard !Store.testing else { return }
-        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+        guard let center = SystemNotifications.center() else { return }
+        center.getDeliveredNotifications { delivered in
             let gone = delivered.filter { $0.request.content.userInfo["search.id"] as? String == String(id)
                 && $0.request.content.userInfo["search.kind"] as? String == "page" }.map(\.request.identifier)
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: gone)
+            center.removeDeliveredNotifications(withIdentifiers: gone)
         }
     }
 

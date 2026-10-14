@@ -521,6 +521,7 @@ struct SideBar: View {
         HStack(spacing: 2) {
             if browser.prefs.usesSpaces { SpaceDot(browser: browser) }
             ExtensionSlot(edge: .trailing)
+            WallDoor(browser: browser)
             BookmarkDoor(browser: browser, arrowEdge: .trailing)
             // Only while a download is running, and a moment after.
             FetchDoor(browser: browser, fetches: browser.fetches)
@@ -884,6 +885,17 @@ struct Speaker: View {
         .onHover { hovering = $0 }
         .help(tab.muted ? "Unmute Tab" : "Mute Tab")
         .animation(Motion.quick, value: hovering)
+    }
+}
+
+/// Selects the current Space’s native Wall tab.
+struct WallDoor: View {
+    @ObservedObject var browser: Browser
+
+    var body: some View {
+        Door(icon: "rectangle.3.group", on: browser.wallPresented, help: "Open Wall") { browser.openWall() }
+            .disabled(!browser.canOpenWall)
+            .accessibilityLabel("Wall")
     }
 }
 

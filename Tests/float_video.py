@@ -10,6 +10,7 @@ must then fill the page's view and be visible.
 """
 import functools
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -19,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import split_view as sv  # noqa: E402
+sv.use("float-video")
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = {
@@ -70,7 +72,11 @@ def main():
         sv.setup(); sv.launch()
         for name in CASES:
             tab = sv.sp("open", url=f"{base}/{name}.html")["resultID"]
-            time.sleep(1.5)
+            deadline = time.monotonic() + 10
+            while not sv.ev(tab, "!!document.querySelector('video') && document.querySelector('video').readyState >= 2 && !document.querySelector('video').paused"):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"{name}: local video never became ready to float")
+                time.sleep(0.1)
             said = sv.cmd({"do": "eval", "id": tab, "js": isolate, "world": "search"}).get("value")
             time.sleep(0.4)
             p = json.loads(sv.cmd({"do": "eval", "id": tab, "js": PROBE}).get("value"))
@@ -78,7 +84,7 @@ def main():
             t.ok(f"{name}: the video fills the view and is drawn", said == "floating" and fills and p["seen"], p)
             sv.sp("close", id=tab)
     finally:
-        t.done(); sv.finish()
+        t.done(); sv.finish(); server.shutdown(); server.server_close(); shutil.rmtree(pages)
     sys.exit(1 if t.failed else 0)
 
 

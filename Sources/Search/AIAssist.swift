@@ -3,7 +3,7 @@ import SwiftUI
 // The AI add-on as you meet it: Summarize Page and Ask About This Page…, and
 // the panel the answer comes in. One page at a time, from your click; the
 // questions after the first stay in the panel, and close it and they are
-// gone — nothing is kept anywhere. The answer is plain text, never a link to
+// gone unless an answer is explicitly saved to Wall. The answer is plain text, never a link to
 // follow or a picture to fetch, marked for what it is: a model's reading,
 // which may be wrong, and where it ran. What the page says goes to the model
 // as the page's words to read, never as orders (see AIPage), and anything
@@ -21,6 +21,8 @@ final class Assistant: ObservableObject, Identifiable {
         let question: String?
         var answer = ""
         var done = false
+        var checked = false
+        var answerLimited = false
         var failed: String?
         /// Addresses, emails and numbers in the answer the page doesn't have.
         var strays: [String] = []
@@ -28,6 +30,13 @@ final class Assistant: ObservableObject, Identifiable {
 
     let id = UUID()
     let tab: Tab.ID
+    let space: UUID?
+    let durable: Bool
+    private(set) var sourcePage: LocusObject?
+    private(set) var readAt: String?
+    private(set) var sourceTitle: String?
+    private(set) var sourceURL: URL?
+    var savedOutputs: [UUID: UUID] = [:]
     let provider: AIProvider
     let model: String
     /// Asked for a summary, rather than opened for a question.
@@ -48,14 +57,26 @@ final class Assistant: ObservableObject, Identifiable {
     private var waiting: AIPage.Ask?
     private var task: Task<Void, Never>?
 
-    init(tab: Tab, provider: AIProvider, model: String, summary: Bool) {
+    init(tab: Tab, provider: AIProvider, model: String, summary: Bool, space: UUID? = nil, source: LocusObject? = nil) {
         self.tab = tab.id
+        self.space = space
+        durable = !tab.shy && !tab.bench && tab.held == nil && tab.built?.configuration.websiteDataStore.isPersistent == true
+        let document = tab.captureDocumentID, web = tab.built, url = tab.pageAddress
         self.provider = provider
         self.model = model
         self.summary = summary
         Task { @MainActor [weak self, weak tab] in
             guard let self, let tab else { return }
-            self.read = await AIPage.read(tab)
+            let read = await AIPage.read(tab)
+            guard tab.captureDocumentID == document, tab.built === web, tab.pageAddress == url, tab.built?.isLoading != true else {
+                self.reading = false; self.trouble = "The page changed while it was being read. Ask again on the loaded page."; return
+            }
+            self.read = read
+            if let read, let url = read.url.flatMap(SavedPageAddress.clean) {
+                self.sourcePage = source?.url == url ? source : LocusObject(type: "page", title: read.title, content: ["url": .string(url.absoluteString)])
+                self.readAt = ISO8601DateFormatter().string(from: Date())
+                self.sourceTitle = read.title; self.sourceURL = url
+            }
             self.addressed = self.read?.addressed ?? false
             self.reading = false
             guard self.read != nil else {
@@ -65,6 +86,8 @@ final class Assistant: ObservableObject, Identifiable {
             if summary { self.ask(.summary) }
         }
     }
+
+    var readWasCut: Bool { read?.cut ?? false }
 
     var busy: Bool { reading || turns.last.map { !$0.done } ?? false }
 
@@ -117,10 +140,14 @@ final class Assistant: ObservableObject, Identifiable {
             do {
                 for try await piece in stream {
                     guard let self, !self.turns.isEmpty else { return }
-                    self.turns[self.turns.count - 1].answer += piece
+                    let remaining = max(0, Assistant.longest - self.turns[self.turns.count - 1].answer.count)
+                    self.turns[self.turns.count - 1].answer += String(piece.prefix(remaining))
                     // Longer than any answer about a page needs: a model
                     // talked into writing on and on is stopped.
-                    if self.turns[self.turns.count - 1].answer.count > Assistant.longest { break }
+                    if self.turns[self.turns.count - 1].answer.count >= Assistant.longest {
+                        self.turns[self.turns.count - 1].answerLimited = true
+                        break
+                    }
                 }
                 self?.finish(nil)
             } catch {
@@ -144,6 +171,7 @@ final class Assistant: ObservableObject, Identifiable {
             await MainActor.run {
                 guard let self, let index = self.turns.firstIndex(where: { $0.id == id }) else { return }
                 self.turns[index].strays = strays
+                self.turns[index].checked = true
             }
         }
         if failed == nil, !turn.answer.isEmpty {
@@ -167,7 +195,7 @@ enum AIAssist {
     static func notice(for provider: AIProvider) -> String {
         var text = "When you ask, Search sends this page's text, its address and your question to \(provider.host)"
         text += provider == .openRouter ? ", which passes them to the model's provider." : "."
-        text += " Their terms and privacy policy apply. Nothing is sent until you ask, never from a private tab, and Search keeps no copy."
+        text += " Their terms and privacy policy apply. Nothing is sent until you ask, never from a private tab, and an answer is kept only if you explicitly save it to Wall."
         switch provider {
         case .gemini:
             text += "\n\nOn Gemini's free tier, outside the EEA, Switzerland and the UK, Google may use this to improve its products, and people may read it. Don't use it on sensitive pages."
@@ -226,7 +254,9 @@ extension Browser {
         // conversation goes on.
         if !summary, let open = assisting, open.tab == tab.id, open.provider == provider { return }
         assisting?.stop()
-        assisting = Assistant(tab: tab, provider: provider, model: model, summary: summary)
+        let store = WorkspaceStore.shared(for: spaceID)
+        let source = tab.wallObjectID(in: spaceID).flatMap { id in store.snapshot.objects.first { $0.id == id } }
+        assisting = Assistant(tab: tab, provider: provider, model: model, summary: summary, space: spaceID, source: source)
     }
 
     func closeAssistant() {
@@ -306,11 +336,13 @@ struct AssistantPanel: View {
             } else if assistant.reading {
                 Text("Reading the page…").font(.system(size: 12.5)).foregroundStyle(Palette.muted)
             }
+            if assistant.readWasCut, assistant.notice == nil { caution("Only part of the long source page was read.") }
             if assistant.addressed, assistant.notice == nil {
                 caution("This page has text written for an AI to follow. The answer may have been steered by it.")
             }
             ForEach(assistant.turns) { turn in
-                TurnView(turn: turn).id(turn.id)
+                TurnView(turn: turn, canSave: browser.canSaveAIAnswer(turn, assistant: assistant),
+                         save: { browser.saveAIAnswer(turn, assistant: assistant) }).id(turn.id)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -360,6 +392,8 @@ struct AssistantPanel: View {
 
     private struct TurnView: View {
         let turn: Assistant.Turn
+        let canSave: Bool
+        let save: () -> Void
 
         var body: some View {
             VStack(alignment: .leading, spacing: 6) {
@@ -380,6 +414,11 @@ struct AssistantPanel: View {
                         .lineSpacing(2.5)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if turn.answerLimited { Text("The answer reached the length limit.").font(.system(size: 11.5)).foregroundStyle(Palette.muted) }
+                if turn.done, turn.failed == nil, !turn.answer.isEmpty, turn.checked {
+                    Button("Save to Wall", action: save).buttonStyle(.plain)
+                        .font(.system(size: 11.5)).foregroundStyle(Palette.muted).disabled(!canSave)
                 }
                 if let failed = turn.failed {
                     Text(verbatim: failed).font(.system(size: 12)).foregroundStyle(Palette.muted)
