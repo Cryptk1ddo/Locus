@@ -22,3 +22,8 @@ Known remaining work: Developer ID signing and notarization; signed update-path
 QA; profile migration tooling; real-site/DRM PiP, VoiceOver and broader native
 release QA. Hosted CI excludes seven live WebKit download checks, which remain
 part of local native QA; this split is tracked in [issue #5](https://github.com/Cryptk1ddo/Locus/issues/5).
+
+Validation: 210 model/security tests and 35 isolated native checks passed; the
+Apple Silicon package passed identity, architecture, signature and checksum
+verification. The full local attempt hit a live WebKit download timeout; it is
+not claimed as a clean 217-test run.
